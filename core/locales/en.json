@@ -1,0 +1,11 @@
+{
+  "app.title": "JARVIS",
+  "activity.errors": "{count} errors in the log",
+  "activity.tasks": "{count} tasks",
+  "activity.summary": "{errors} in the log and {tasks} tasks",
+  "status.healthy": "healthy",
+  "status.problems": "PROBLEMS FOUND",
+  "common.ok": "OK",
+  "common.cancel": "Cancel",
+  "common.confirm": "Confirm"
+}

@@ -1,0 +1,71 @@
+# ── Jarvis v2 — what never belongs in the repository ──────────────────────────
+# Everything listed here is created by the app on first run. A fresh clone with
+# none of it present boots straight to the setup screen, which is the intended
+# first experience — so nothing here needs to be committed, and some of it must
+# never be.
+
+# ── Secrets. Committing any of these publishes them. ──────────────────────────
+/config/api_keys.json
+/config/mcp_servers.json
+/config/chat_history.json
+/config/device_sessions.json
+/config/workflows.json
+/config/workspace.json
+/config/*.bak*
+/config/*.pre-*
+config/certs/
+config/whatsapp_web/
+config/ui_tasks.json
+**/token*.json
+**/client_secret*.json
+*credentials*.json
+.env
+.env.*
+ui_old.py
+# ── Personal data the assistant accumulates about you ─────────────────────────
+memory/long_term.json
+memory/water_state.json
+memory/*.db
+
+# ── Python build noise ────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Editors and operating systems ─────────────────────────────────────────────
+.vscode/
+.idea/
+android/.gradle/
+android/local.properties
+android/**/build/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Runtime output ────────────────────────────────────────────────────────────
+*.log
+.jarvis/
+
+# ── Local backups and caches ────────────────────────────────────────────────────
+.backup/
+runtime/*.json
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+logs/
+downloads/
+screenshots/
+DIAMOND HILLS/

@@ -1,0 +1,44 @@
+{
+  "servers": [
+    {
+      "name": "opencode_mcp",
+      "transport": "stdio",
+      "enabled": true,
+      "approval": "never",
+      "cwd": "C:\\Users\\RODION\\Documents\\Codex\\2026-10-08\\https-t-me-c-1885250891-304\\outputs\\JARVIS",
+      "command": "C:\\Users\\RODION\\Documents\\Codex\\2026-10-08\\https-t-me-c-1885250891-304\\outputs\\JARVIS\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\RODION\\Documents\\Codex\\2026-10-08\\https-t-me-c-1885250891-304\\outputs\\JARVIS\\mcp_servers\\opencode_mcp\\server.py"
+      ]
+    },
+    {
+      "name": "OpenAI_Docs",
+      "transport": "http",
+      "url": "https://developers.openai.com/mcp",
+      "enabled": true,
+      "approval": "never"
+    },
+    {
+      "approval": "never",
+      "cwd": "C:\\Users\\RODION\\Documents\\Codex\\2026-10-08\\https-t-me-c-1885250891-304\\outputs\\JARVIS",
+      "transport": "stdio",
+      "enabled": true,
+      "args": [
+        "C:\\Users\\RODION\\Documents\\Codex\\2026-10-08\\https-t-me-c-1885250891-304\\outputs\\JARVIS\\mcp_servers\\telegram_personal\\server.py"
+      ],
+      "command": "C:\\Users\\RODION\\Documents\\Codex\\2026-10-08\\https-t-me-c-1885250891-304\\outputs\\JARVIS\\.venv\\Scripts\\python.exe",
+      "name": "telegram_personal"
+    },
+    {
+      "name": "windows_admin",
+      "transport": "stdio",
+      "enabled": true,
+      "approval": "never",
+      "cwd": "C:\\Users\\RODION\\Documents\\Codex\\2026-10-08\\https-t-me-c-1885250891-304\\outputs\\JARVIS",
+      "command": "C:\\Users\\RODION\\Documents\\Codex\\2026-10-08\\https-t-me-c-1885250891-304\\outputs\\JARVIS\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\RODION\\Documents\\Codex\\2026-10-08\\https-t-me-c-1885250891-304\\outputs\\JARVIS\\mcp_servers\\windows_admin\\server.py"
+      ]
+    }
+  ]
+}

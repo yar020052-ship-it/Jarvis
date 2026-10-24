@@ -1,0 +1,30 @@
+{
+  "servers": [
+    {
+      "name": "openai_docs",
+      "transport": "http",
+      "url": "https://developers.openai.com/mcp",
+      "headers": {
+        "Authorization": "${OPENAI_MCP_TOKEN}"
+      },
+      "allowed_tools": null,
+      "tool_schemas": {},
+      "enabled": false,
+      "approval": "always"
+    },
+    {
+      "name": "local_example",
+      "transport": "stdio",
+      "command": "C:/path/to/your-mcp-server.exe",
+      "args": [],
+      "cwd": "C:/path/to/server-folder",
+      "env": {
+        "SERVICE_TOKEN": "${JARVIS_SERVICE_TOKEN}"
+      },
+      "allowed_tools": null,
+      "tool_schemas": {},
+      "enabled": false,
+      "approval": "always"
+    }
+  ]
+}

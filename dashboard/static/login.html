@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>JARVIS</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #070b12;
+      --card: #101827;
+      --raised: #141e30;
+      --border: #27364b;
+      --border-strong: #3d5777;
+      --accent: #52d4f2;
+      --adim: #152d3a;
+      --text: #f3f7fd;
+      --secondary: #b2c0d4;
+      --muted: #9aaac0;
+    }
+    html, body {
+      min-height: 100dvh;
+      background:
+        radial-gradient(ellipse at 12% 0%, #16344888, transparent 42rem),
+        radial-gradient(ellipse at 92% 28%, #23255055, transparent 34rem),
+        var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: max(18px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom));
+      -webkit-font-smoothing: antialiased;
+    }
+    .card {
+      width: min(420px, 100%);
+      padding: clamp(28px, 8vw, 44px) clamp(22px, 8vw, 36px);
+      background: linear-gradient(145deg, #141e30f2, #101827f7);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      text-align: center;
+      box-shadow: 0 24px 72px #0008, inset 0 1px #ffffff0c;
+    }
+    .logo {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 10px;
+      margin-bottom: 6px;
+    }
+    .logo em { color: var(--accent); font-style: normal; }
+    .sub {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+      margin-bottom: 28px;
+    }
+    .key-wrap {
+      position: relative;
+      margin-bottom: 16px;
+    }
+    .key-input {
+      width: 100%;
+      padding: 18px 14px;
+      background: var(--raised);
+      border: 1.5px solid var(--border-strong);
+      border-radius: 16px;
+      color: var(--text);
+      font-size: 30px;
+      font-weight: 700;
+      font-family: 'Courier New', monospace;
+      text-align: center;
+      letter-spacing: 8px;
+      text-transform: uppercase;
+      outline: none;
+      transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+      caret-color: var(--accent);
+    }
+    .key-input::placeholder {
+      color: #9aaac080;
+      letter-spacing: 6px;
+      font-size: 20px;
+    }
+    .key-input:focus {
+      border-color: var(--accent);
+      background: var(--adim);
+      box-shadow: 0 0 0 3px #52d4f222;
+    }
+    .err {
+      font-size: 12px;
+      color: #ff7185;
+      min-height: 18px;
+      margin-bottom: 14px;
+    }
+    .btn {
+      width: 100%;
+      padding: 14px;
+      background: var(--accent);
+      color: #07131b;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      border: none;
+      border-radius: 15px;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      box-shadow: 0 6px 20px #52d4f229;
+    }
+    .btn:hover  { opacity: 0.88; }
+    .btn:active { transform: scale(0.98); }
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      20%,60% { transform: translateX(-7px); }
+      40%,80% { transform: translateX(7px); }
+    }
+    .shake { animation: shake 0.35s ease; }
+    .voice-note {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 20px;
+      line-height: 1.6;
+      text-align: left;
+    }
+    .voice-note code {
+      background: #ffffff10;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+    }
+    @media (max-height: 560px) {
+      html, body { align-items: flex-start; }
+      .card { margin: 10px auto; padding-top: 24px; padding-bottom: 24px; }
+    }
+    #reconnecting {
+      display: none;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="logo"><em>J</em>ARVIS</div>
+    <div class="sub">Удалённый доступ</div>
+    <p id="reconnecting">Восстанавливаю соединение…</p>
+    <p class="hint">Откройте <strong style="color:var(--text)">«Удалённое управление»</strong> в приложении JARVIS на ПК и введите код сопряжения.</p>
+    <div class="key-wrap">
+      <input class="key-input" id="key" type="text" maxlength="6"
+             autocomplete="off" autocorrect="off" spellcheck="false"
+             placeholder="· · · · · ·" aria-label="Код сопряжения">
+    </div>
+    <div class="err" id="err"></div>
+    <button class="btn" onclick="doLogin()">ПОДКЛЮЧИТЬСЯ</button>
+    <p class="voice-note">
+      🎤 <strong style="color:var(--text)">Голосовые команды:</strong> для микрофона
+      откройте JARVIS по защищённому HTTPS-адресу и разрешите доступ к микрофону в браузере.
+    </p>
+  </div>
+
+  <script>
+    // Try auto-reconnect with stored device token (set on first QR login)
+    (async function() {
+      const devTok = localStorage.getItem('jarvis_device_token');
+      if (!devTok) return;
+      document.getElementById('reconnecting').style.display = 'block';
+      try {
+        const r = await fetch('/api/device-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device_token: devTok }),
+        });
+        const d = await r.json();
+        if (d.ok && d.token) {
+          sessionStorage.setItem('jarvis_key', d.key);
+          sessionStorage.setItem('jarvis_token', d.token);
+          location.replace('/');
+          return;
+        }
+      } catch (_) {}
+      // Device token rejected (server restarted) — clear it and show normal form
+      localStorage.removeItem('jarvis_device_token');
+      document.getElementById('reconnecting').style.display = 'none';
+    })();
+
+    const inp = document.getElementById('key');
+    inp.focus();
+
+    inp.addEventListener('input', () => {
+      inp.value = inp.value.toUpperCase().replace(/[^A-Z2-9]/g, '');
+      if (inp.value.length === 6) doLogin();
+    });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+    async function doLogin() {
+      const key = inp.value.trim();
+      if (key.length < 6) { shake(); return; }
+      let data;
+      try {
+        const r = await fetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: key })
+        });
+        data = await r.json();
+      } catch (e) {
+        document.getElementById('err').textContent = 'Нет связи с компьютером';
+        shake(); return;
+      }
+      if (data.ok && data.token) {
+        sessionStorage.setItem('jarvis_key', key);
+        sessionStorage.setItem('jarvis_token', data.token);
+        if (data.device_token) localStorage.setItem('jarvis_device_token', data.device_token);
+        location.href = '/';
+      } else {
+        inp.value = '';
+        inp.focus();
+        document.getElementById('err').textContent = 'Код неверный или срок его действия истёк';
+        shake();
+      }
+    }
+
+    function shake() {
+      const c = document.getElementById('card');
+      c.classList.remove('shake');
+      void c.offsetWidth;
+      c.classList.add('shake');
+    }
+  </script>
+</body>
+</html>

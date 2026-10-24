@@ -1,0 +1,11 @@
+{
+  "app.title": "JARVIS",
+  "activity.errors": "{count} ошибок в журнале",
+  "activity.tasks": "{count} задач",
+  "activity.summary": "{errors} в журнале и {tasks} задач",
+  "status.healthy": "здоров",
+  "status.problems": "ЕСТЬ ПРОБЛЕМЫ",
+  "common.ok": "ОК",
+  "common.cancel": "Отмена",
+  "common.confirm": "Подтвердить"
+}

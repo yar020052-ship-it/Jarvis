@@ -1,0 +1,93 @@
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "av>=19.0.0",
+    "beautifulsoup4>=4.12,<5",
+    "black>=26.10.0",
+    "comtypes>=1.4.17 ; sys_platform == 'win32'",
+    "cryptography>=42,<50",
+    "defusedxml>=0.7",
+    "ddgs>=9,<10",
+    "fastapi>=0.110,<1",
+    "google-api-python-client>=2.200.0",
+    "google-auth-httplib2>=0.4.2",
+    "google-auth-oauthlib>=1.4.1",
+    "google-genai>=2.30.1,<3",
+    "mediapipe>=1.0.1",
+    "mcp>=2,<3",
+    "telethon>=1.45,<2",
+    "mss>=9,<11",
+    "numpy>=1.24,<3",
+    "opencv-python>=4.8,<5",
+    "openpyxl>=3.1.5",
+    "paho-mqtt>=2.1.0",
+    "pandas>=3.0.6",
+    "pdfplumber>=0.11.10",
+    "pillow>=10,<13",
+    "playwright>=1.40,<2",
+    "psutil>=5.9,<8",
+    "pyautogui>=0.9.54",
+    "pycaw>=20260927 ; sys_platform == 'win32'",
+    "pydub>=0.25.1",
+    "pygetwindow>=0.0.9",
+    "pynput>=1.7.7,<2",
+    "nvidia-ml-py>=12.0.0,<14",
+    "pygrabber>=0.2 ; sys_platform == 'win32'",
+    "pypdf2>=3.0.1",
+    "pyperclip>=1.11.0",
+    "pyqt6>=6.6,<7",
+    "pyqt6-webengine>=6.11.0",
+    "python-docx>=1.2.0",
+    "python-multipart>=0.0.9,<1",
+    "python-pptx>=1.0.2",
+    "pywin32>=312 ; sys_platform == 'win32'",
+    "pywinauto>=0.6.9 ; sys_platform == 'win32'",
+    "qrcode[pil]>=7,<9",
+    "requests>=2.31,<3",
+    "send2trash>=2.1.0",
+    "sounddevice>=0.4,<1",
+    "tinytuya>=1.20.0",
+    "uvicorn[standard]>=0.27,<1",
+    "winotify>=1.1.0 ; sys_platform == 'win32'",
+    "wmi>=1.5.1 ; sys_platform == 'win32'",
+    "youtube-transcript-api>=1.2.4",
+    "yt-dlp>=2026.8.19",
+]
+
+[project.optional-dependencies]
+emotion = [
+    "funasr>=1.4.14,<2",
+    "torch>=2.6",
+]
+test = [
+    "pytest>=8,<10",
+]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["core"]
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[tool.pyright]
+include = ["core"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+reportMissingImports = "none"
+reportMissingTypeStubs = "none"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]

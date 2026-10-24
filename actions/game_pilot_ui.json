@@ -1,0 +1,26 @@
+{
+  "soviet": {
+    "buttons": {
+      "road": [
+        229,
+        967
+      ],
+      "rail_tracks": [
+        252,
+        967
+      ]
+    },
+    "workflows": {
+      "opener": [
+        {
+          "do": "click_named",
+          "name": "rail_tracks"
+        }
+      ]
+    }
+  },
+  "hoi4": {
+    "buttons": {},
+    "workflows": {}
+  }
+}

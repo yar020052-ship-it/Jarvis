@@ -1,0 +1,18 @@
+Короткий гайд: обновления без GitHub
+
+1. Сгенерировать релиз
+   python scripts/release.py --version 0.1.2
+
+2. Получить dist/Jarvis-v0.1.2-win-x64.zip и dist/latest.json (или поправить latest.local.json)
+
+3. Создать latest.local.json с file:// ссылкой на zip:
+   "url": "file://C:/path/to/Jarvis-v0.1.2-win-x64.zip"
+
+4. Указать переменную окружения для Jarvis
+   JARVIS_UPDATE_MANIFEST=file://C:/path/to/latest.local.json
+
+5. Запустить Jarvis. При старте появится уведомление о новой версии.
+   Также можно спросить: "проверь обновления"
+
+6. Нажать "Обновить" — Jarvis скачает (скопирует) zip, запустит апдейтер scripts/update.py и перезапустится.
+   Пользовательские данные в %LOCALAPPDATA%\JARVIS\ не затрагиваются.

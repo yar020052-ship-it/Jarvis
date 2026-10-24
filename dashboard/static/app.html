@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#070b12">
+  <title>JARVIS</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #070b12;
+      --surface: #101827;
+      --surface-raised: #141e30;
+      --line: #27364b;
+      --line-strong: #3d5777;
+      --text: #f3f7fd;
+      --muted: #9aaac0;
+      --secondary: #b2c0d4;
+      --blue: #52d4f2;
+      --blue-dim: #328da8;
+      --blue-soft: #152d3a;
+      --green: #61d6ac;
+      --amber: #ffae63;
+      --red: #ff7185;
+      --shadow: 0 16px 40px #0007;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      background:
+        radial-gradient(ellipse at 12% 0%, #16344888, transparent 42rem),
+        radial-gradient(ellipse at 92% 28%, #23255055, transparent 34rem),
+        var(--bg);
+      color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    main {
+      width: min(100%, 980px);
+      margin: 0 auto;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      padding: max(8px, env(safe-area-inset-top)) clamp(14px, 3vw, 28px) max(8px, env(safe-area-inset-bottom));
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      padding: 14px 2px;
+      border-bottom: 1px solid var(--line);
+      background: #070b12dd;
+      backdrop-filter: blur(18px);
+    }
+    .mark {
+      width: 46px;
+      height: 46px;
+      border: 1px solid var(--line-strong);
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      color: var(--blue);
+      font-size: 25px;
+      font-weight: 800;
+      background: linear-gradient(145deg, #1a3040, var(--surface-raised));
+      box-shadow: inset 0 1px #ffffff12, 0 0 24px #52d4f219;
+    }
+    .brand { font-weight: 800; letter-spacing: .22em; }
+    .sub { color: var(--muted); margin-top: 2px; font-size: 12px; }
+    .status { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--secondary); font-size: 12px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #596579; }
+    .dot.on { background: var(--green); box-shadow: 0 0 13px #61d6ac88; }
+    .dot.off { background: var(--red); box-shadow: 0 0 13px #ff718555; }
+    #feed {
+      flex: 1;
+      min-height: min(38dvh, 350px);
+      overflow: auto;
+      padding: 22px 2px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overscroll-behavior: contain;
+    }
+    .empty { margin: auto; max-width: 390px; color: var(--muted); text-align: center; line-height: 1.65; }
+    .msg {
+      max-width: min(86%, 720px);
+      padding: 13px 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--surface-raised);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      line-height: 1.55;
+      box-shadow: 0 4px 16px #0002;
+    }
+    .msg.user { align-self: flex-end; background: #152d3a; border-color: #328da8; }
+    .msg.jarvis { align-self: flex-start; }
+    .msg.sys { align-self: center; background: transparent; border: 0; color: var(--muted); font-size: 12px; text-align: center; padding: 3px; box-shadow: none; }
+    .time { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; }
+    .panel {
+      margin: 0 0 12px;
+      padding: 15px 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(145deg, #141e30e8, #101827f2);
+      box-shadow: var(--shadow);
+    }
+    .panel h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--secondary); font-size: 12px; letter-spacing: .11em; }
+    .panel h3 .r { margin-left: auto; }
+    .tgmsg { padding: 11px 0 5px; border-top: 1px solid var(--line); }
+    .tgmsg b { font-size: 14px; }
+    .tgmsg .t { margin-left: 8px; color: var(--muted); font-size: 11px; }
+    .tgmsg p { margin: 5px 0 2px; font-size: 14px; line-height: 1.5; }
+    .row { display: flex; flex-wrap: wrap; gap: 9px; }
+    .chip {
+      min-width: 140px;
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: 13px;
+      background: var(--surface-raised);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.25;
+      transition: border-color .15s ease, background .15s ease, transform .15s ease;
+    }
+    .chip:hover { border-color: var(--blue-dim); background: #1a2a3c; }
+    .chip:active { transform: scale(.985); }
+    .note { color: var(--muted); font-size: 12px; line-height: 1.55; }
+    form {
+      position: sticky;
+      bottom: 0;
+      z-index: 3;
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      padding: 12px 0 max(12px, env(safe-area-inset-bottom));
+      background: linear-gradient(transparent, var(--bg) 24%);
+      backdrop-filter: blur(8px);
+    }
+    textarea {
+      flex: 1;
+      min-height: 54px;
+      max-height: 160px;
+      resize: none;
+      padding: 14px 16px;
+      border: 1px solid var(--line-strong);
+      border-radius: 17px;
+      outline: none;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      box-shadow: inset 0 1px #ffffff08;
+    }
+    textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #52d4f222; }
+    button { cursor: pointer; }
+    form button {
+      min-width: 56px;
+      min-height: 54px;
+      padding: 0 17px;
+      border: 1px solid #6cdef7;
+      border-radius: 17px;
+      background: var(--blue);
+      color: #07131b;
+      font-size: 21px;
+      font-weight: 800;
+      box-shadow: 0 6px 20px #52d4f229;
+    }
+    button:disabled { opacity: .45; cursor: default; }
+    :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .hint { padding: 0 0 8px; color: var(--muted); text-align: center; font-size: 11px; }
+    @media (max-width: 600px) {
+      main { padding-left: 12px; padding-right: 12px; }
+      header { padding: 11px 1px; }
+      .mark { width: 42px; height: 42px; border-radius: 14px; }
+      #feed { min-height: 34dvh; padding-top: 16px; }
+      .msg { max-width: 92%; }
+      .panel { padding: 13px; border-radius: 16px; }
+      .chip { min-width: 125px; }
+    }
+    @media (max-height: 620px) {
+      header { padding-top: 8px; padding-bottom: 8px; }
+      #feed { min-height: 150px; padding-top: 12px; }
+      .panel { padding: 11px 13px; margin-bottom: 8px; }
+      form { padding-top: 7px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header><div class="mark">J</div><div><div class="brand">JARVIS</div><div class="sub">Удалённое управление</div></div><div class="status"><i class="dot" id="dot"></i><span id="state">Подключение…</span></div></header>
+  <section id="feed" aria-live="polite"><div class="empty" id="empty">Напишите или продиктуйте команду — JARVIS выполнит её на подключённом ПК.</div></section>
+  <div class="panel" id="tgpanel"><h3>✈ TELEGRAM — НОВЫЕ <button class="chip r" id="tgrefresh" style="flex:0;min-width:0">↻</button></h3><div id="tglist"><div class="note">Нажмите ↻ — покажу свежие сообщения из ваших чатов.</div></div></div>
+  <div class="panel"><h3>🎙 МИКРОФОН ТЕЛЕФОНА</h3><div class="row"><button class="chip" id="miclive">Слушать живьём</button><button class="chip" id="micstop">⏹ Стоп</button></div><div class="note" id="micnote">Звук идёт в динамики ПК в реальном времени. Включается только этой кнопкой или вашей прямой просьбой.</div></div>
+  <div class="panel"><h3>🧠 САМОРАЗВИТИЕ <button class="chip r" id="diaryrefresh" style="flex:0;min-width:0">↻</button></h3><div class="row"><button class="chip" id="autostatus">Здоровье</button><button class="chip" id="autorepair">🔧 Починиться</button></div><div id="diary" class="note" style="white-space:pre-wrap;max-height:220px;overflow:auto">Нажмите ↻ — покажу дневник развития.</div></div>
+  <form id="form"><textarea id="command" rows="1" placeholder="Сообщение для JARVIS…" aria-label="Сообщение"></textarea><button id="send" aria-label="Отправить">↑</button></form>
+  <div class="hint">Команды выполняются на вашем ПК. Не сообщайте код сопряжения другим.</div>
+</main>
+<script src="/static/crypto.js"></script>
+<script>
+(()=>{
+  const token=sessionStorage.getItem('jarvis_token');
+  if(!token){location.replace('/login');return}
+  const feed=document.getElementById('feed'), empty=document.getElementById('empty');
+  const dot=document.getElementById('dot'), state=document.getElementById('state');
+  const form=document.getElementById('form'), input=document.getElementById('command'), send=document.getElementById('send');
+  let socket, retry;
+  const add=(speaker,text,ts)=>{
+    if(empty)empty.remove();
+    const el=document.createElement('article');
+    const who=String(speaker||'sys').toLowerCase();
+    el.className='msg '+(who==='user'?'user':who==='jarvis'?'jarvis':'sys');
+    el.textContent=String(text||'');
+    if(ts){const time=document.createElement('small');time.className='time';try{time.textContent=new Date(ts).toLocaleTimeString()}catch(_){time.textContent=''}el.append(time)}
+    feed.append(el);feed.scrollTop=feed.scrollHeight;
+  };
+  const setState=(ok,text)=>{dot.className='dot '+(ok?'on':'off');state.textContent=text;send.disabled=!ok};
+  const connect=()=>{
+    clearTimeout(retry);
+    const scheme=location.protocol==='https:'?'wss:':'ws:';
+    socket=new WebSocket(scheme+'//'+location.host+'/ws?token='+encodeURIComponent(token));
+    socket.onopen=()=>setState(true,'На связи');
+    socket.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.type==='log')add(m.speaker,m.text,m.ts);else if(m.type==='sys')add('sys',m.text);else if(m.type==='status'){setState(true,m.state==='sleeping'?'Спит — разбудите JARVIS':'На связи')}}catch(_){}};
+    socket.onclose=()=>{setState(false,'Нет связи');retry=setTimeout(connect,2500)};
+    socket.onerror=()=>socket.close();
+  };
+  const encrypt=text=>{const pin=sessionStorage.getItem('jarvis_key')||'';const salt=CryptoJS.enc.Utf8.parse('JARVIS-DASHBOARD-v1');const key=CryptoJS.PBKDF2(pin,salt,{keySize:256/32,iterations:200000,hasher:CryptoJS.algo.SHA256});const iv=CryptoJS.lib.WordArray.random(16);const cipher=CryptoJS.AES.encrypt(text,key,{iv,mode:CryptoJS.mode.CBC,padding:CryptoJS.pad.Pkcs7}).ciphertext;return CryptoJS.enc.Base64.stringify(iv.clone().concat(cipher))};
+  const auth=()=>({'Authorization':'Bearer '+token});
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const tglist=document.getElementById('tglist');
+  document.getElementById('tgrefresh').onclick=async()=>{
+    tglist.innerHTML='<div class="note">Читаю Telegram…</div>';
+    try{const r=await fetch('/api/telegram/recent',{headers:auth()});const j=await r.json();
+      if(!j.ok){tglist.innerHTML='<div class="note">Не вышло: '+esc(j.error||'?')+'</div>';return}
+      const ms=j.messages||[];
+      tglist.innerHTML=ms.length?ms.map(m=>'<div class="tgmsg"><b>'+esc(m.from)+' · '+esc(m.chat)+'</b><span class="t">'+esc(m.date||'')+'</span><p>'+esc(m.text)+'</p></div>').join('')
+        :'<div class="note">Новых сообщений нет.</div>';
+    }catch(e){tglist.innerHTML='<div class="note">Нет связи с сервером.</div>'}
+  };
+  const micnote=document.getElementById('micnote');
+  const micop=async op=>{
+    micnote.textContent=op==='stop'?'Останавливаю…':'Включаю трансляцию…';
+    try{const r=await fetch('/api/phone/mic',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},auth()),body:JSON.stringify({op})});const j=await r.json();
+      micnote.textContent=j.ok?j.result:('Не вышло: '+(j.error||'?'));
+    }catch(e){micnote.textContent='Нет связи с сервером.'}
+  };
+  document.getElementById('miclive').onclick=()=>micop('live');
+  document.getElementById('micstop').onclick=()=>micop('stop');
+  const diary=document.getElementById('diary');
+  const autodo=async op=>{
+    diary.textContent=op==='repair'?'Чинюсь…':'Смотрю…';
+    try{const r=await fetch('/api/autonomy',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},auth()),body:JSON.stringify({op})});const j=await r.json();
+      diary.textContent=j.ok?j.result:('Не вышло: '+(j.error||'?'));
+    }catch(e){diary.textContent='Нет связи с сервером.'}
+  };
+  document.getElementById('autostatus').onclick=()=>autodo('status');
+  document.getElementById('autorepair').onclick=()=>autodo('repair');
+  document.getElementById('diaryrefresh').onclick=async()=>{
+    diary.textContent='Читаю дневник…';
+    try{const r=await fetch('/api/autonomy/diary',{headers:auth()});const j=await r.json();
+      diary.textContent=j.ok?j.text:('Не вышло: '+(j.error||'?'));
+    }catch(e){diary.textContent='Нет связи с сервером.'}
+  };
+  form.addEventListener('submit',e=>{e.preventDefault();const text=input.value.trim();if(!text||!socket||socket.readyState!==WebSocket.OPEN)return;socket.send(JSON.stringify({type:'command',enc:encrypt(text)}));input.value='';input.style.height='auto'});
+  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,140)+'px'});
+  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit()}});
+  connect();
+})();
+</script>
+</body>
+</html>
