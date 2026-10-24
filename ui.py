@@ -5665,7 +5665,7 @@ class ChatBubble(QFrame):
     def __init__(self, speaker: str, text: str, parent=None):
         super().__init__(parent)
         is_user = speaker == "user"
-        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.setStyleSheet(f"""
             QFrame {{
                 background: {C.PRI_GHO if is_user else C.PANEL2};
@@ -5683,14 +5683,18 @@ class ChatBubble(QFrame):
         )
         lay.addWidget(who)
         body = QLabel(text)
+        self._body = body
         body.setTextFormat(Qt.TextFormat.PlainText)
         body.setWordWrap(True)
+        body.setMinimumWidth(0)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         body.setStyleSheet(
             f"color: {C.TEXT if is_user else C.WHITE}; background: transparent; border: none;"
         )
         body.setFont(QFont(_FONT, 10))
+        body.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         lay.addWidget(body)
+        self.adjustSize()
 
 
 class ChatWidget(QWidget):
@@ -5813,6 +5817,8 @@ class ChatWidget(QWidget):
         self._save_tmr.setSingleShot(True)
         self._save_tmr.timeout.connect(self.save_history)
         self.load_history()
+        QTimer.singleShot(0, self._fit_bubbles)
+        QTimer.singleShot(0, self._scroll_to_bottom)
 
     def add_telegram_messages(self, messages: list[dict]) -> None:
         """Append real incoming Telegram messages to the live activity section."""
@@ -5860,6 +5866,8 @@ class ChatWidget(QWidget):
             bubble = item.widget() if item is not None else None
             if isinstance(bubble, ChatBubble):
                 bubble.setMaximumWidth(max_width)
+                if hasattr(bubble, "_body"):
+                    bubble._body.adjustSize()
                 bubble.updateGeometry()
                 bubble.adjustSize()
 
