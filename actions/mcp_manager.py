@@ -25,8 +25,13 @@ _ENV_REF_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 
 
 def _config_path() -> Path:
-    base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent
-    return base / "config" / "mcp_servers.json"
+    try:
+        from core.paths import get_config_dir
+
+        return get_config_dir() / "mcp_servers.json"
+    except Exception:  # pragma: no cover - fallback for very early import
+        base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent
+        return base / "config" / "mcp_servers.json"
 
 
 def _load() -> tuple[dict, str | None]:

@@ -24,6 +24,26 @@ def _roots():
 
 def available_diplomatic_actions(state: dict) -> list[str]:
     result = []
+    for root in _roots():
+        for sub in ("common/decisions", "common/decisions/categories"):
+            folder = root / sub
+            if not folder.is_dir():
+                continue
+            for path in sorted(folder.rglob("*.txt")):
+                try:
+                    text = path.read_text(encoding="utf-8-sig", errors="replace")
+                except OSError:
+                    continue
+                for match in re.finditer(r"(?m)^\s*([A-Za-z0-9_.-]+)\s*=\s*\{", text):
+                    result.append(match.group(1))
+    seen = set()
+    out = []
+    for item in result:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out[:60]
 
 
 def prepare_diplomacy_task(task: dict, state: dict) -> tuple[list[dict], str]:
@@ -35,23 +55,3 @@ def prepare_diplomacy_task(task: dict, state: dict) -> tuple[list[dict], str]:
     if action not in available_diplomatic_actions(state):
         return [], "diplomatic action is not available"
     return [], "validated: diplomatic action available; GUI execution pending"
-    for root in _roots():
-        for sub in ("common/decisions", "common/ai_strategy"):
-            folder = root / sub
-            if not folder.is_dir():
-                continue
-            for path in sorted(folder.rglob("*.txt")):
-                try:
-                    text = path.read_text(encoding="utf-8-sig", errors="replace")
-                except OSError:
-                    continue
-                for match in re.finditer(r"\b([A-Za-z0-9_.-]+)\s*=\s*\{", text):
-                    result.append(match.group(1))
-    seen = set()
-    out = []
-    for item in result:
-        if item in seen:
-            continue
-        seen.add(item)
-        out.append(item)
-    return out[:30]

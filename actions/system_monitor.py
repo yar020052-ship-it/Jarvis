@@ -246,6 +246,8 @@ class ResourceHistory:
                 ) as handle:
                     json.dump({"version": 1, "samples": samples}, handle,
                               separators=(",", ":"))
+                    handle.flush()
+                    os.fsync(handle.fileno())
                     temp_path = Path(handle.name)
                 try:
                     os.replace(temp_path, self.path)

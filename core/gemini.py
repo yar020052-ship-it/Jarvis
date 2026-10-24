@@ -466,7 +466,16 @@ def api_key(refresh: bool = False) -> str:
             and signature == _cached_key_signature
         ):
             return _cached_key
-        _cached_key = str(load_config("api_keys.json").get("gemini_api_key") or "")
+        try:
+            from core.secrets import get_secret
+
+            secret = get_secret("gemini_api_key")
+        except Exception:  # pragma: no cover
+            secret = None
+        if secret:
+            _cached_key = secret
+        else:
+            _cached_key = str(load_config("api_keys.json").get("gemini_api_key") or "")
         _cached_key_signature = signature
         return _cached_key
 

@@ -30,6 +30,7 @@ import importlib.util
 import inspect
 import re
 import sys
+import threading
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,6 +74,7 @@ class ActionRegistry:
         self._actions = actions  # name -> ActionRecord, VALID entries only
         self._all_records: list[ActionRecord] = []
         self._runtime_errors: list[dict[str, str]] = []
+        self._runtime_errors_lock = threading.Lock()
         self._logger = logger
 
     # -- called by main.py at LiveConnectConfig build time --
@@ -102,14 +104,20 @@ class ActionRegistry:
 
     def diagnostics(self) -> dict:
         """Return load-time and recent run-time action failures for live status."""
+        with self._runtime_errors_lock:
+            runtime_errors = list(self._runtime_errors)
         return {
             "active": len(self._actions),
             "rejected": [
                 {"name": rec.name, "file": rec.file, "error": rec.error}
                 for rec in self._all_records if not rec.valid
             ],
-            "runtime_errors": list(self._runtime_errors),
+            "runtime_errors": runtime_errors,
         }
+
+    def _snapshot_runtime_errors(self) -> list[dict[str, str]]:
+        with self._runtime_errors_lock:
+            return list(self._runtime_errors)
 
     # -- called by main.py from _execute_tool --
     def run(self, name: str, parameters: dict, ctx: dict | None = None) -> str:
@@ -120,8 +128,9 @@ class ActionRegistry:
             return _call_handler(rec.handler, parameters, ctx or {}) or "Done."
         except Exception as e:
             self._logger(f"Action '{name}' crashed during run(): {e}")
-            self._runtime_errors.append({"name": name, "error": str(e)[:500]})
-            del self._runtime_errors[:-20]
+            with self._runtime_errors_lock:
+                self._runtime_errors.append({"name": name, "error": str(e)[:500]})
+                del self._runtime_errors[:-20]
             traceback.print_exc()
             return f"Tool '{name}' failed: {e}"
 
@@ -209,28 +218,16 @@ def discover_actions(
     valid: dict[str, ActionRecord] = {}
     all_records: list[ActionRecord] = []
 
-    files = sorted(
-        actions_dir.glob("*.py"), key=lambda p: p.name
-    )  # deterministic order
-    for path in files:
-        if path.name.startswith("_"):
-            continue
+    from core.module_loader import iter_module_files, load_module
+
+    for path in iter_module_files(actions_dir):
         try:
             module_name = f"actions.{path.stem}"
             # Reuse the already-imported module when present so handlers are the
             # same objects the rest of the app holds.
             module = sys.modules.get(module_name)
             if module is None:
-                spec = importlib.util.spec_from_file_location(module_name, path)
-                if spec is None or spec.loader is None:
-                    raise ImportError("could not build import spec")
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[module_name] = module
-                try:
-                    spec.loader.exec_module(module)
-                except Exception:
-                    sys.modules.pop(module_name, None)
-                    raise
+                module = load_module(path, module_name)
 
             if getattr(module, "TOOL", None) is None:
                 continue  # not an action file — a helper/capture-only module

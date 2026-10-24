@@ -532,10 +532,12 @@ def _decide_hoi4(
     except Exception:
         pass
     try:
-        from actions.hoi4_laws import available_laws
-        law_ids = available_laws(state)
-        if law_ids:
-            current_state += "\n\nFILE-GROUNDED LAW/DECISION STATE:\n- Available laws/decisions: " + ", ".join(law_ids[:15])
+        from actions.hoi4_laws import law_task_context
+
+        law_context = law_task_context(
+            state, _PILOT.get("pending_tasks") or _PILOT.get("pending_task"))
+        if law_context:
+            current_state += "\n\n" + law_context
     except Exception:
         pass
     try:
@@ -592,7 +594,7 @@ def _decide_hoi4(
         "Respond in concise Russian with a short status commentary and one practical strategic advice, at most one typed task and at most 1 bounded UI action. Prefer file-grounded tasks over UI clicks; send a UI action only when the attached screenshot clearly confirms the target. If a screenshot is attached, also return screen_observation: a brief description of the visible panel/modal/alert and any relevant UI state. If no screenshot is attached, set screen_observation to an empty string; never imply you saw one. "
         "Prefer game keyboard shortcuts and safe menu navigation; never use console commands, cheats, arbitrary text entry, or guessed mouse coordinates. If a screenshot is attached and an exact visible target is needed, use click with normalized 0-1000 x/y coordinates and button left or right. Use no coordinates without a screenshot. For an offensive order, click only an identifiable friendly unit and a clearly visible enemy-controlled province, and only if the save confirms an active war. "
         "When a research slot is empty, choose a technology ONLY from the listed candidate records across all supported tree categories and express the choice as a typed task; compare the real effects and favor useful economic, research, supply or military gains over old low-value unlocks. Never use W or arbitrary clicks as a substitute for selecting research. "
-        "Tasks schema: [{\"kind\":\"start_research\",...}] or [{\"kind\":\"start_focus\",...}] or [{\"kind\":\"change_law\"/\"decision\"/\"production\"/\"diplomacy\"/\"military\",...}]. "
+        "Tasks schema: [{\"kind\":\"start_research\",\"technology_id\":\"...\"}] or [{\"kind\":\"start_focus\",\"focus_id\":\"...\"}] or [{\"kind\":\"change_law\",\"law_id\":\"<variant id from the FILE-GROUNDED LAW STATE list>\"}] or [{\"kind\":\"decision\"/\"production\"/\"diplomacy\"/\"military\",...}]. "
         "The executor checks each task against the current save, installed mod and local GUI geometry, then verifies it against a later save. "
         "Selections awaiting verification reserve their corresponding empty slots: subtract pending task count from empty slots before claiming research capacity. Do not describe reserved slots as available and do not repeat a pending task. "
         "Do not return start_research unless at least one unreserved slot and a suitable listed candidate exist; candidates already meet the date, prerequisites and GUI visibility checks. When no research slot is safely available, continue with a grounded non-research decision or return no actions if the files provide no safe target. "
@@ -980,6 +982,19 @@ def _execute(actions: list, game_mode: bool = False, max_actions: int = 3,
                     done.append(click_focus(focus_id))
                 except Exception as exc:
                     done.append(f"failed focus_click: {exc}")
+            elif do == "law_click":
+                law_id = str(act.get("law_id", "")).strip()
+                current_id = str(act.get("law_current", "")).strip()
+                group_id = str(act.get("law_group", "")).strip()
+                if not law_id or not current_id or not group_id:
+                    done.append("failed law_click: missing law_id/law_current/law_group")
+                    continue
+                try:
+                    from actions.hoi4_law_gui import click_law
+
+                    done.append(click_law(group_id, current_id, law_id))
+                except Exception as exc:
+                    done.append(f"failed law_click: {exc}")
             elif do == "press":
                 pag.press(str(act.get("key", "enter")))
                 done.append(f"press {act.get('key')}")
@@ -1332,6 +1347,11 @@ def _loop(game: str, goal: str, log, generation: int | None = None, comment=None
                         task_status = verify_focus_pending(pending, live)
                         item_id = pending.get("focus_id", "?")
                         label = "фокус"
+                    elif pending.get("kind") == "change_law":
+                        from actions.hoi4_laws import verify_law_pending
+                        task_status = verify_law_pending(pending, live)
+                        item_id = pending.get("law_id", "?")
+                        label = "закон"
                     else:
                         from actions.hoi4_tasks import verify_pending
                         task_status = verify_pending(pending, live)
@@ -1523,6 +1543,23 @@ def _loop(game: str, goal: str, log, generation: int | None = None, comment=None
                         task_candidates.append(fallback_focus)
                 except Exception:
                     pass
+        if persistent:
+            pending_law = any(
+                isinstance(item, dict) and item.get("kind") == "change_law"
+                for item in pending_tasks
+            )
+            if not pending_law and not any(
+                isinstance(item, dict) and item.get("kind") == "change_law"
+                for item in task_candidates
+            ):
+                try:
+                    from actions.hoi4_laws import best_law_task
+
+                    fallback_law = best_law_task(current_live, pending_tasks)
+                    if fallback_law:
+                        task_candidates.append(fallback_law)
+                except Exception:
+                    pass
         if (persistent and not _research_suppressed(active_goal) and task_candidates
                 and len(pending_tasks) < int(current_live.get("research", {}).get("empty_slots", 0) or 0)):
             from actions.hoi4_tasks import prepare_task
@@ -1558,13 +1595,29 @@ def _loop(game: str, goal: str, log, generation: int | None = None, comment=None
                 task_rejection = task_status
         if persistent and not selected_task:
             for task in task_candidates:
-                if not isinstance(task, dict) or task.get("kind") not in ("change_law", "decision", "production", "diplomacy", "military"):
+                if not isinstance(task, dict) or task.get("kind") != "change_law":
+                    continue
+                from actions.hoi4_laws import law_group_for, prepare_law_task
+
+                task_actions, task_status = prepare_law_task(task, current_live, pending_tasks)
+                if task_actions:
+                    actions = task_actions
+                    group = law_group_for(str(task.get("law_id", "")))
+                    selected_task = {
+                        "kind": "change_law",
+                        "law_id": task.get("law_id"),
+                        "law_group": (group or {}).get("id", task.get("law_group")),
+                    }
+                    plan["thought"] = str(plan.get("thought", "")) + f" [закон: {selected_task['law_id']}]"
+                    break
+                task_rejection = task_status
+        if persistent and not selected_task:
+            for task in task_candidates:
+                if not isinstance(task, dict) or task.get("kind") not in ("decision", "production", "diplomacy", "military"):
                     continue
                 mod = None
                 kind = task.get("kind")
-                if kind in ("change_law", "decision"):
-                    from actions.hoi4_laws import prepare_law_task as mod
-                elif kind == "production":
+                if kind == "production":
                     from actions.hoi4_production import prepare_production_task as mod
                 elif kind == "diplomacy":
                     from actions.hoi4_diplomacy import prepare_diplomacy_task as mod

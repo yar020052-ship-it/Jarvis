@@ -249,7 +249,10 @@ _CURSOR_SLACK = 0.15
 # Cached FFT analysis banks for _pcm_visemes: Hanning window + formant masks
 # depend only on (_VIS_WIN, sr) — rebuilding rfftfreq + 5 masks on every
 # 100 ms batch was pure overhead.
-_VIS_BANDS_CACHE: dict = {}
+from collections import OrderedDict
+
+_VIS_BANDS_CACHE: "OrderedDict[int, tuple]" = OrderedDict()
+_VIS_BANDS_CACHE_LIMIT = 16
 
 
 def _vis_bands(sr: int):
@@ -266,6 +269,11 @@ def _vis_bands(sr: int):
             (freqs >= 3800) & (freqs < 8000),
         )
         _VIS_BANDS_CACHE[sr] = cached
+        _VIS_BANDS_CACHE.move_to_end(sr)
+        while len(_VIS_BANDS_CACHE) > _VIS_BANDS_CACHE_LIMIT:
+            _VIS_BANDS_CACHE.popitem(last=False)
+    else:
+        _VIS_BANDS_CACHE.move_to_end(sr)
     return cached
 
 

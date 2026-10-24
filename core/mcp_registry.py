@@ -143,6 +143,7 @@ class MCPRegistry:
         self._tools: dict[str, dict] = {}
         self._errors: dict[str, str] = {}
         self._runtime_errors: list[dict[str, str]] = []
+        self._runtime_errors_lock = threading.Lock()
         self._ready = threading.Event()
         self._load_config()
         # Discovery spawns server processes + network (HTTP) — seconds.
@@ -545,12 +546,13 @@ class MCPRegistry:
         return "\n".join(lines)
 
     def _remember_runtime_error(self, tool: dict, error: str) -> None:
-        self._runtime_errors.append({
-            "server": str(tool.get("server") or "?"),
-            "tool": str(tool.get("remote_name") or "?"),
-            "error": str(error)[:500],
-        })
-        del self._runtime_errors[:-20]
+        with self._runtime_errors_lock:
+            self._runtime_errors.append({
+                "server": str(tool.get("server") or "?"),
+                "tool": str(tool.get("remote_name") or "?"),
+                "error": str(error)[:500],
+            })
+            del self._runtime_errors[:-20]
 
     async def _call_remote(
         self,

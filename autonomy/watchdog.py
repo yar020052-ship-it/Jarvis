@@ -129,8 +129,10 @@ def _settings() -> dict:
         data = load_api_keys()
         s["enabled"] = bool(data.get("autonomy_enabled", True))
         s["auto_repair"] = bool(data.get("autonomy_auto_repair", True))
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001
+        from core.diagnostics import log_exception
+
+        log_exception("autonomy.watchdog._settings", exc)
     return s
 
 

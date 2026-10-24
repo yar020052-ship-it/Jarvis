@@ -429,6 +429,30 @@ def _focus_state(country: str) -> dict:
     }
 
 
+def _ideas_state(country: str) -> dict:
+    """Read the country's active ideas/laws from the save.
+
+    HOI4 stores them as a flat, whitespace-separated list inside a direct
+    ``ideas = { ... }`` block of the country scope.  Only ids are kept; the
+    law catalog decides which of them are law variants.
+    """
+    open_at = _block_start(country, "ideas")
+    if open_at is None:
+        return {"active": [], "count": 0}
+    close_at = _matching_brace(country, open_at)
+    if close_at is None:
+        return {"active": [], "count": 0}
+    body = re.sub(r"#[^\n]*", "", country[open_at + 1:close_at])
+    # Defensive: if a save version nests sub-blocks, ignore their contents.
+    body = re.sub(r"\{[^{}]*\}", " ", body)
+    active: list[str] = []
+    for match in re.finditer(r'"([^"]+)"|([A-Za-z0-9_][A-Za-z0-9_.-]*)', body):
+        token = match.group(1) or match.group(2)
+        if token and token not in active:
+            active.append(token)
+    return {"active": active, "count": len(active)}
+
+
 def _interesting_lines(country: str) -> list[str]:
     source_lines = country.splitlines()
     excerpt = []
@@ -511,6 +535,7 @@ def parse_save(path: Path) -> dict:
         "country_excerpt": _interesting_lines(country),
         "research": _research_state(country),
         "focuses": _focus_state(country),
+        "ideas": _ideas_state(country),
         "modified": stat_after.st_mtime,
         "size": stat_after.st_size,
     }
@@ -599,6 +624,9 @@ def prompt_context(state: dict) -> str:
         f"- Research slots from save: {state.get('research', {}).get('empty_slots', 0)} empty, "
         f"{len(state.get('research', {}).get('active', []))} active "
         f"({', '.join(state.get('research', {}).get('active', [])[:5]) or 'none'}).",
+        f"- Active ideas/laws recorded in save: "
+        f"{(state.get('ideas') or {}).get('count', 0)} "
+        f"({', '.join((state.get('ideas') or {}).get('active', [])[:8]) or 'none parsed'}).",
         "- Country state fields from the save:",
     ]
     lines.extend(f"  {line}" for line in state.get("country_excerpt", []))

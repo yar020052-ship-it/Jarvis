@@ -24,17 +24,6 @@ def _roots():
 
 def available_equipment(state: dict) -> list[str]:
     result = []
-
-
-def prepare_production_task(task: dict, state: dict) -> tuple[list[dict], str]:
-    if not isinstance(task, dict) or str(task.get("kind", "")).lower() != "production":
-        return [], "unsupported task kind"
-    equip = str(task.get("equipment_id", "")).strip()
-    if not equip:
-        return [], "missing equipment_id"
-    if equip not in available_equipment(state):
-        return [], "equipment is not available"
-    return [], "validated: production target available; GUI execution pending"
     for root in _roots():
         folder = root / "common" / "units" / "equipment"
         if not folder.is_dir():
@@ -53,4 +42,15 @@ def prepare_production_task(task: dict, state: dict) -> tuple[list[dict], str]:
             continue
         seen.add(item)
         out.append(item)
-    return out[:30]
+    return out[:60]
+
+
+def prepare_production_task(task: dict, state: dict) -> tuple[list[dict], str]:
+    if not isinstance(task, dict) or str(task.get("kind", "")).lower() != "production":
+        return [], "unsupported task kind"
+    equip = str(task.get("equipment_id", "")).strip()
+    if not equip:
+        return [], "missing equipment_id"
+    if equip not in available_equipment(state):
+        return [], "equipment is not available"
+    return [], "validated: production target available; GUI execution pending"

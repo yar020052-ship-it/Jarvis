@@ -65,6 +65,10 @@ emotion = [
 ]
 test = [
     "pytest>=8,<10",
+    "pytest-cov>=5,<7",
+]
+security = [
+    "keyring>=24,<26",
 ]
 
 [tool.mypy]

@@ -649,7 +649,7 @@ class DashboardServer:
         self._pending_keys: dict[str, float] = {}
         # Защита от перебора PIN: IP → (время блокировки, счётчик неудач).
         # Без этого /login принимал сколько угодно попыток подряд.
-        self._login_fails: dict[str, tuple[float, int]] = {}
+        self._login_fails: dict[str, tuple[float, int]] = self._load_login_fails()
         self._device_sessions: dict[str, dict] = self._load_device_sessions()
         self._phone_audio_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
         # Vision is live: keep only the newest frame so a slow model never
@@ -715,6 +715,35 @@ class DashboardServer:
             _DEVICES_FILE.parent.mkdir(parents=True, exist_ok=True)
             _DEVICES_FILE.write_text(
                 json.dumps(self._device_sessions, ensure_ascii=False, indent=1),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    _LOGIN_FAILS_FILE = BASE_DIR / "config" / "dashboard_login_fails.json"
+
+    def _load_login_fails(self) -> dict:
+        try:
+            import json
+
+            raw = json.loads(self._LOGIN_FAILS_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                out = {}
+                for key, value in raw.items():
+                    if isinstance(value, (list, tuple)) and len(value) == 2:
+                        out[str(key)] = (float(value[0]), int(value[1]))
+                return out
+        except Exception:
+            pass
+        return {}
+
+    def _save_login_fails(self) -> None:
+        try:
+            import json
+
+            self._LOGIN_FAILS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            self._LOGIN_FAILS_FILE.write_text(
+                json.dumps(self._login_fails, ensure_ascii=False, indent=1),
                 encoding="utf-8",
             )
         except Exception:
@@ -851,6 +880,7 @@ class DashboardServer:
             entered = str(body.get("pin", "")).strip().upper()
             if entered in self._pending_keys and self._pending_keys[entered] > now:
                 self._login_fails.pop(client, None)
+                self._save_login_fails()
                 del self._pending_keys[entered]  # one-time use
                 tok = secrets.token_urlsafe(32)
                 dev_tok = secrets.token_urlsafe(32)
@@ -872,11 +902,13 @@ class DashboardServer:
             fails += 1
             if fails >= 5:
                 self._login_fails[client] = (now + 300.0, 0)
+                self._save_login_fails()
                 return JSONResponse(
                     {"ok": False, "error": "Too many attempts. Try again in 5 minutes."},
                     status_code=429,
                 )
             self._login_fails[client] = (0.0, fails)
+            self._save_login_fails()
             return JSONResponse(
                 {"ok": False, "error": "Invalid or expired key"}, status_code=401
             )

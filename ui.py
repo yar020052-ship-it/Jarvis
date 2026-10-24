@@ -5877,6 +5877,10 @@ class ChatWidget(QWidget):
         if bar:
             bar.setValue(bar.maximum())
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._scroll_to_bottom)
+
     def _bubble_max_width(self) -> int:
         available = self._scroll.viewport().width()
         return max(150, int(available * 0.86)) if available > 0 else 560
@@ -5913,6 +5917,7 @@ class ChatWidget(QWidget):
         self._lay.addStretch(1)
         self._container.adjustSize()
         self._container.updateGeometry()
+        QTimer.singleShot(0, self._scroll_to_bottom)
 
     def set_overview_mode(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -5971,6 +5976,7 @@ class ChatWidget(QWidget):
             align = Qt.AlignmentFlag.AlignRight if speaker == "user" else Qt.AlignmentFlag.AlignLeft
             self._lay.insertWidget(self._lay.count() - 1, bubble, alignment=align)
         self._bubble_tmr.start(10)
+        QTimer.singleShot(0, self._scroll_to_bottom)
         if not self._save_pending:
             self._save_pending = True
             self._save_tmr.start(400)  # debounce bursts (viseme-fed replies)
