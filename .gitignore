@@ -29,6 +29,7 @@ memory/*.db
 
 # ── Python build noise ────────────────────────────────────────────────────────
 __pycache__/
+*.bak*
 *.py[cod]
 *$py.class
 *.so
