@@ -139,6 +139,9 @@ def ensure_user_dirs() -> None:
         pass
 
 
+_LEGACY_MIGRATION_VERSION = 1
+
+
 def migrate_legacy_user_files() -> None:
     """Копирует legacy-файлы из APP_DIR в user-data, если их там нет.
 
@@ -149,6 +152,13 @@ def migrate_legacy_user_files() -> None:
         app_dir = get_app_dir()
         cfg_dir = get_config_dir()
         cfg_dir.mkdir(parents=True, exist_ok=True)
+        marker = cfg_dir / ".migration_version"
+        try:
+            current = int(marker.read_text(encoding="utf-8").strip()) if marker.exists() else 0
+        except (OSError, ValueError):
+            current = 0
+        if current >= _LEGACY_MIGRATION_VERSION:
+            return
         legacy_cfg = app_dir / "config"
         if legacy_cfg.is_dir():
             for name in (
@@ -168,6 +178,10 @@ def migrate_legacy_user_files() -> None:
                         shutil.copy2(src, dst)
                 except Exception:
                     continue
+        try:
+            marker.write_text(str(_LEGACY_MIGRATION_VERSION), encoding="utf-8")
+        except OSError:
+            pass
     except Exception:
         pass
 
