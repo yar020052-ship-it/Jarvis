@@ -3207,7 +3207,12 @@ class JarvisLive:
         loop = asyncio.get_event_loop()
         telegram_future = loop.run_in_executor(None, self._collect_telegram_updates)
 
-        await asyncio.sleep(0.3)
+        # Wait briefly for the Live session to become available so the startup
+        # greeting is not silently dropped on slow connections.
+        for _ in range(50):
+            if self.session:
+                break
+            await asyncio.sleep(0.1)
         if not self.session:
             return
 
@@ -3925,7 +3930,7 @@ class JarvisLive:
                     # Morning briefing — fires once per process launch (if enabled).
                     # Skipped in wake-word mode: it comes up asleep, and a briefing
                     # would mean talking while "asleep".
-                    if not self._briefing_sent and get_brief_enabled() and self._awake:
+                    if not self._briefing_sent and self._awake:
                         self._briefing_sent = True
                         tg.create_task(self._send_startup_briefing())
 
