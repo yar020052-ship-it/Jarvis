@@ -1822,8 +1822,11 @@ class JarvisLive:
             "[GITHUB INTEGRATION]\n"
             "You can autonomously discover, inspect and install open-source features using "
             "github_scout, github_integrate and self_integrate. When the user asks to add a "
-            "capability from GitHub, do it end-to-end: search, inspect, install the chosen file, "
-            "then verify with the health check. Do not stop at sending links.\n\n"
+            "capability from GitHub, do NOT ask for a link first: call github_scout with a "
+            "relevant query, choose a promising repository, inspect it with github_integrate, "
+            "install the needed file with self_integrate, then verify with the health check. "
+            "Only ask the user for a link if search returns nothing usable. Do not stop at "
+            "sending links.\n\n"
         )
         response_style = get_response_style()
         style_instruction = {
