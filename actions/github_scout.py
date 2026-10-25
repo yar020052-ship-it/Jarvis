@@ -14,7 +14,11 @@ def github_scout(parameters: dict | None = None, **_kwargs) -> str:
         return "Укажите тему поиска на GitHub длиной от 2 до 160 символов."
 
     language = str(params.get("language") or "").strip()
-    min_stars = max(0, min(100000, int(params.get("min_stars") or 0)))
+    try:
+        min_stars = int(params.get("min_stars") or 0)
+    except (TypeError, ValueError):
+        min_stars = 0
+    min_stars = max(0, min(100000, min_stars))
     q = query
     if language:
         clean_language = "".join(ch for ch in language if ch.isalnum() or ch in "+#.- ")[:40]
@@ -73,8 +77,8 @@ TOOL = {
         "activity and star counts. Use this to find open "
         "source projects and possible features for JARVIS. This is discovery only: "
         "never claim a repository is safe based on stars, and never download or run code. "
-        "For a promising result, use web_search to inspect its README and source "
-        "security posture, and compatibility before proposing integration."
+        "For a promising result, call github_integrate with owner/name to read its README "
+        "and key files, then self_integrate to install a reviewed file."
     ),
     "parameters": {
         "type": "OBJECT",

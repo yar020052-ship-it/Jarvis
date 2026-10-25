@@ -65,17 +65,22 @@ def self_integrate(parameters: dict | None = None, **_kwargs) -> str:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
 
+    def _rollback() -> None:
+        """Restore the previous file, or remove the new one entirely."""
+        if backup_path is not None and backup_path.is_file():
+            shutil.copy2(backup_path, target)
+        else:
+            target.unlink(missing_ok=True)
+
     try:
         from autonomy import health
 
         report = health.run_health()
         if not report.ok:
-            if backup_path is not None:
-                shutil.copy2(backup_path, target)
+            _rollback()
             return "Установка отменена: health-check не прошёл. Изменение откачено."
     except Exception as exc:  # noqa: BLE001
-        if backup_path is not None:
-            shutil.copy2(backup_path, target)
+        _rollback()
         return f"Установка отменена: ошибка health-check ({exc}). Изменение откачено."
 
     result = f"Установлен {source_rel} -> {target_rel}."

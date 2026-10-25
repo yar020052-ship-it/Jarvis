@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -67,6 +68,31 @@ def _save(data: dict, original: str | None, label: str) -> str:
     os.replace(temporary, path)
     push_undo(f"{label} MCP configuration", lambda: _restore_config(original))
     return f"Saved MCP configuration at {path}. Restart JARVIS to load the updated tools."
+
+
+def _audit_approval_never(server: str, user_authorized: bool, event: str) -> None:
+    """Record grants of unattended MCP tool access for later review."""
+    path = _config_path().parent / "mcp_approval_audit.json"
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    except (OSError, ValueError, TypeError):
+        entries = []
+    if not isinstance(entries, list):
+        entries = []
+    entries.append(
+        {
+            "time": datetime.now(timezone.utc).isoformat(),
+            "server": server,
+            "event": event,
+            "user_authorized": bool(user_authorized),
+        }
+    )
+    entries = entries[-200:]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _find(servers: list, name: str) -> dict:
@@ -191,6 +217,8 @@ def mcp_manager(parameters: dict, **_context) -> str:
 
             def _commit() -> str:
                 servers.append(item)
+                if approval == "never":
+                    _audit_approval_never(name, user_authorized, "add")
                 return _save(config, original, f"added {name}")
 
             endpoint = item.get("command") or item.get("url")
@@ -231,6 +259,7 @@ def mcp_manager(parameters: dict, **_context) -> str:
                         server["approval"] = "never"  # in-memory only: диск трогает _save в confirm
 
                         def _commit_approval() -> str:
+                            _audit_approval_never(name, user_authorized, "set_approval")
                             return _save(config, original, f"set_approval {name} on {server['name']}")
 
                         return request_confirmation(

@@ -104,7 +104,7 @@ def github_integrate(parameters: dict | None = None, **_kwargs) -> str:
         return "Укажите репозиторий в виде owner/name или ссылку https://github.com/owner/name."
 
     goal = str(params.get("goal") or params.get("task") or "").strip()
-    clone = bool(params.get("clone", False))
+    clone = bool(params.get("clone", True))
     requested_files = params.get("files")
     if isinstance(requested_files, str):
         requested_files = [item.strip() for item in requested_files.split(",") if item.strip()]
@@ -112,9 +112,12 @@ def github_integrate(parameters: dict | None = None, **_kwargs) -> str:
         requested_files = list(_DEFAULT_FILES)
 
     destination = _safe_vendor_dir(repo)
-    lines = [f"Репозиторий: {repo}", f"Цель интеграции: {goal or 'не указана'}", f"Локальная копия: {destination}"]
+    lines = [f"Репозиторий: {repo}", f"Цель интеграции: {goal or 'не указана'}"]
     if clone:
         lines.append(_clone(repo, destination))
+        lines.append(f"Локальная копия: {destination}")
+    else:
+        lines.append("Локальная копия не создана (clone=false).")
 
     structure = _top_level(destination)
     if structure:
@@ -129,9 +132,9 @@ def github_integrate(parameters: dict | None = None, **_kwargs) -> str:
         lines.append(f"\n===== {relative} =====\n{content[:_MAX_FILE_BYTES]}")
 
     lines.append(
-        "\nДальше: изучите прочитанный код и предложите точечную интеграцию. "
-        "Этот инструмент не запускает и не устанавливает код из репозитория; "
-        "любые изменения в проекте должны быть применены через обычный патч/review."
+        "\nДальше: изучите прочитанный код и установите выбранный файл через "
+        "self_integrate (source должен указывать внутрь vendor_scout/), затем "
+        "проверьте health-check. Этот инструмент сам ничего не запускает и не устанавливает."
     )
     return "\n".join(lines)
 
@@ -140,10 +143,11 @@ TOOL = {
     "name": "github_integrate",
     "description": (
         "Inspect a public GitHub repository for possible JARVIS integration. Accepts "
-        "owner/name or a GitHub URL, optionally clones it into vendor_scout/ without "
-        "executing anything, reads key files, and returns a structured report. Use this "
-        "when the user asks to analyze or adopt a feature from GitHub. Never run or "
-        "install repository code automatically."
+        "owner/name or a GitHub URL, clones it into vendor_scout/ by default (set "
+        "clone=false to skip), reads key files without executing anything, and returns a "
+        "structured report. Use this "
+        "when the user asks to analyze or adopt a feature from GitHub. This tool only "
+        "inspects sources; install one reviewed file with self_integrate afterwards."
     ),
     "parameters": {
         "type": "OBJECT",
