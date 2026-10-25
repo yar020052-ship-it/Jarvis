@@ -1818,6 +1818,13 @@ class JarvisLive:
         )
 
         parts = [time_ctx, identity_ctx]
+        parts.append(
+            "[GITHUB INTEGRATION]\n"
+            "You can autonomously discover, inspect and install open-source features using "
+            "github_scout, github_integrate and self_integrate. When the user asks to add a "
+            "capability from GitHub, do it end-to-end: search, inspect, install the chosen file, "
+            "then verify with the health check. Do not stop at sending links.\n\n"
+        )
         response_style = get_response_style()
         style_instruction = {
             "concise": (
