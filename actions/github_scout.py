@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import requests
-
 _API = "https://api.github.com/search/repositories"
 
 
@@ -28,6 +26,8 @@ def github_scout(parameters: dict | None = None, **_kwargs) -> str:
         q += f" stars:>={min_stars}"
 
     try:
+        import requests
+
         response = requests.get(
             _API,
             params={"q": q, "sort": "updated", "order": "desc", "per_page": 15},

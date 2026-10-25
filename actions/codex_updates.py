@@ -8,9 +8,6 @@ from datetime import date
 from html import unescape
 from pathlib import Path
 
-import requests
-from bs4 import BeautifulSoup
-
 _CHANGELOG_URL = "https://learn.chatgpt.com/docs/changelog"
 try:
     from core.paths import MEMORY_DIR
@@ -31,6 +28,9 @@ _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _entries() -> list[dict[str, str]]:
+    import requests
+    from bs4 import BeautifulSoup
+
     response = requests.get(
         _CHANGELOG_URL,
         headers={"User-Agent": "JARVIS-Codex-Update-Reader/1.0"},
@@ -81,6 +81,8 @@ def _entries() -> list[dict[str, str]]:
 
 def codex_updates(parameters: dict | None = None, **_kwargs) -> str:
     """Return new Codex changelog entries and record the latest checked date."""
+    import requests
+
     try:
         entries = _entries()
         if not entries:
