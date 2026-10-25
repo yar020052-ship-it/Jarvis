@@ -11,6 +11,7 @@ Install deps:  pip install fastapi "uvicorn[standard]" cryptography
 import asyncio
 import base64
 import os
+import threading
 import re
 import secrets
 import socket
@@ -437,7 +438,7 @@ def _ensure_crypto_js() -> None:
         print("[Dashboard] Encryption will fall back to CDN load on client.")
 
 
-_ensure_crypto_js()
+threading.Thread(target=_ensure_crypto_js, daemon=True, name="crypto-js-download").start()
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

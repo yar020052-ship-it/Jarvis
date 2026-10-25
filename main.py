@@ -3779,14 +3779,17 @@ class JarvisLive:
                 threading.Thread(target=warmup_ollama, daemon=True, name="ollama-warmup").start()
             except Exception as exc:
                 print(f"[Ollama] warmup skipped: {exc}", flush=True)
-            try:
-                from actions.game_pilot import resume_authorized_campaign
+            def _resume_game_pilot():
+                try:
+                    from actions.game_pilot import resume_authorized_campaign
 
-                resume_message = resume_authorized_campaign(self.ui)
-                if resume_message:
-                    print(f"[GamePilot] {resume_message}", flush=True)
-            except Exception as exc:
-                print(f"[GamePilot] восстановление кампании не удалось: {exc}", flush=True)
+                    resume_message = resume_authorized_campaign(self.ui)
+                    if resume_message:
+                        print(f"[GamePilot] {resume_message}", flush=True)
+                except Exception as exc:
+                    print(f"[GamePilot] ошибка восстановления кампании: {exc}", flush=True)
+
+            threading.Thread(target=_resume_game_pilot, daemon=True, name="game-pilot-resume").start()
 
         # Tell the device picker the exact rates the streams open at, from the
         # constants that actually open them — so it can never list a device that
