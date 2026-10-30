@@ -1,5 +1,5 @@
 ![banner](/assets/images/banner.png)
-# JARVIS (v2)
+# JARVISIS AI
 [RUSSIAN DOCS](/README_ru.md)
 ### The Real-Time Personal AI Assistant for Your Computer — By Akrom Rustamov
 
