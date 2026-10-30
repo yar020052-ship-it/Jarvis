@@ -101,11 +101,15 @@ def test_resource_history_stores_aggregates_and_reports_recurring_peak(tmp_path,
     from datetime import datetime
 
     history = system_monitor.ResourceHistory(tmp_path / "telemetry" / "history.json")
-    monkeypatch.setattr(system_monitor, "_resource_sample", lambda now=None: {
-        "ts": int(datetime(2026, 10, 19, 14).timestamp()),
-        "hour": 14, "weekday": 0, "cpu": 82.0, "ram": 85.0,
+    now = datetime.now().astimezone()
+    local_now = datetime.fromtimestamp(now.timestamp())
+    sample = {
+        "ts": int(now.timestamp()),
+        "hour": local_now.hour, "weekday": local_now.weekday(),
+        "cpu": 82.0, "ram": 85.0,
         "disk": 55.0, "swap": 10.0, "gpu": None,
-    })
+    }
+    monkeypatch.setattr(system_monitor, "_resource_sample", lambda _now=None: sample)
     assert history.record(force=True)
     assert history.record(force=True)
     assert history.record(force=True)
@@ -114,11 +118,11 @@ def test_resource_history_stores_aggregates_and_reports_recurring_peak(tmp_path,
     assert "process" not in stored.lower()
     assert "cpu" in stored and "ram" in stored
 
-    summary = history.summary(now=datetime(2026, 10, 21, 14))
+    summary = history.summary(now=now)
     assert summary["sample_count"] == 3
     assert summary["averages_percent"]["cpu"] == 82.0
     assert summary["recurring_high_load"] == [{
-        "weekday": 0, "hour": 14, "samples": 3,
+        "weekday": local_now.weekday(), "hour": local_now.hour, "samples": 3,
         "cpu_percent": 82.0, "ram_percent": 85.0,
     }]
     assert summary["automatic_optimization"] is False
@@ -129,7 +133,7 @@ def test_resource_history_prunes_samples_older_than_seven_days(tmp_path):
     from datetime import datetime
 
     history = system_monitor.ResourceHistory(tmp_path / "history.json")
-    now = datetime(2026, 10, 21, 12).astimezone()
+    now = datetime.now().astimezone()
     old = int(now.timestamp()) - 8 * 86400
     fresh = int(now.timestamp()) - 60
     history.path.parent.mkdir(parents=True, exist_ok=True)

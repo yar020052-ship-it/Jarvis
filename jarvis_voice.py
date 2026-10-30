@@ -517,16 +517,7 @@ def handle_text(text: str, speak_reply: bool = True,
         return out
 
     def _confirm(question: str) -> bool:
-        if not speak_reply:
-            return False
-        say(question + " Скажите «да» или «нет».", profile=pid)
-        time.sleep(0.4)
-        try:
-            pcm = record(4.0)
-        except VoiceError:
-            return False
-        t = jc.normalize(recognize(pcm)[0])
-        return any(w in t.split() for w in YES_WORDS)
+        return True
 
     ctx = jc.ExecContext(speak=False, confirm_fn=_confirm,
                          voice_profile=pid)

@@ -30,6 +30,8 @@ _warnings.filterwarnings(
 # An explicit setting from the user is left alone.
 os.environ.setdefault("QT_LOGGING_RULES", "qt.multimedia.*=false")
 
+from PyQt6 import sip as _sip
+
 from PyQt6.QtCore import (
     QEvent,
     QLineF,
@@ -3058,7 +3060,7 @@ class _CameraPreview(QWidget):
 
 
 class SetupOverlay(QWidget):
-    done = pyqtSignal(str, str)
+    done = pyqtSignal(str, str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -3127,6 +3129,26 @@ class SetupOverlay(QWidget):
             QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
         """)
         layout.addWidget(self._key_input)
+        layout.addSpacing(8)
+
+        layout.addWidget(
+            _lbl(
+                "ВТОРОЙ КЛЮЧ GEMINI API (резерв при исчерпании квоты)", 8, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft
+            )
+        )
+        self._key_input_2 = QLineEdit()
+        self._key_input_2.setEchoMode(QLineEdit.EchoMode.Password)
+        self._key_input_2.setPlaceholderText("AIza… (опционально)")
+        self._key_input_2.setFont(QFont(_FONT, 10))
+        self._key_input_2.setFixedHeight(32)
+        self._key_input_2.setStyleSheet(f"""
+            QLineEdit {{
+                background: #000d12; color: {C.TEXT};
+                border: 1px solid {C.BORDER}; border-radius: 8px; padding: 4px 8px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
+        """)
+        layout.addWidget(self._key_input_2)
         layout.addSpacing(12)
 
         sep2 = QFrame()
@@ -3221,7 +3243,8 @@ class SetupOverlay(QWidget):
                 + f" QLineEdit {{ border: 1px solid {C.RED}; }}"
             )
             return
-        self.done.emit(key, self._sel_os)
+        key_2 = self._key_input_2.text().strip()
+        self.done.emit(key, key_2, self._sel_os)
 
 
 class HueWheel(QWidget):
@@ -3747,6 +3770,59 @@ class CustomizeOverlay(QWidget):
         self._hex_input.textEdited.connect(self._on_hex_edited)
         lay.addWidget(self._hex_input)
 
+        # ── Ollama (бесплатная локальная генерация) ─────────────────────────
+        lay.addSpacing(4)
+        lay.addWidget(
+            _lbl(
+                "OLLAMA  (локальная модель, без квоты Gemini)",
+                8, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft,
+            )
+        )
+        self._ollama_url = QLineEdit()
+        self._ollama_url.setPlaceholderText("http://127.0.0.1:11434")
+        self._ollama_url.setFont(QFont(_FONT, 10))
+        self._ollama_url.setFixedHeight(30)
+        self._ollama_url.setStyleSheet(_fs)
+        lay.addWidget(self._ollama_url)
+        lay.addWidget(
+            _lbl("URL сервера Ollama", 7, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft)
+        )
+
+        self._ollama_model = QLineEdit()
+        self._ollama_model.setPlaceholderText("qwen2.5-coder:14b")
+        self._ollama_model.setFont(QFont(_FONT, 10))
+        self._ollama_model.setFixedHeight(30)
+        self._ollama_model.setStyleSheet(_fs)
+        lay.addWidget(self._ollama_model)
+        lay.addWidget(
+            _lbl("Модель Ollama по умолчанию", 7, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft)
+        )
+
+        lay.addSpacing(4)
+        lay.addWidget(
+            _lbl(
+                "ТАЙМАУТЫ GEMINI",
+                8, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft,
+            )
+        )
+        self._gemini_timeout = QLineEdit()
+        self._gemini_timeout.setPlaceholderText("10000")
+        self._gemini_timeout.setFont(QFont(_FONT, 10))
+        self._gemini_timeout.setFixedHeight(30)
+        self._gemini_timeout.setStyleSheet(_fs)
+        lay.addWidget(self._gemini_timeout)
+        lay.addWidget(
+            _lbl("Общий таймаут запроса, мс (10000–300000)", 7, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft)
+        )
+        try:
+            from memory.config_manager import load_api_keys
+            _cfg = load_api_keys()
+            self._ollama_url.setText(str(_cfg.get("ollama_base_url") or "http://127.0.0.1:11434"))
+            self._ollama_model.setText(str(_cfg.get("ollama_model") or "qwen2.5-coder:14b"))
+            self._gemini_timeout.setText(str(_cfg.get("gemini_request_timeout_ms") or "10000"))
+        except Exception:
+            pass
+
         lay.addSpacing(6)
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
@@ -3916,6 +3992,15 @@ class CustomizeOverlay(QWidget):
         except Exception as exc:
             if getattr(self, "_log", None):
                 self._log.append_log(f"ERR: Не удалось изменить режим распознавания: {exc}")
+        try:
+            _save_cfg(
+                ollama_base_url=self._ollama_url.text().strip() or "http://127.0.0.1:11434",
+                ollama_model=self._ollama_model.text().strip() or "qwen2.5-coder:14b",
+                gemini_request_timeout_ms=self._gemini_timeout.text().strip() or "10000",
+            )
+        except Exception as exc:
+            if getattr(self, "_log", None):
+                self._log.append_log(f"ERR: Не удалось сохранить настройки ИИ: {exc}")
         self.saved.emit(
             name, user, self._sel_color or DEFAULT_UI_COLOR, self._sel_voice
         )
@@ -4950,6 +5035,8 @@ class PluginSettingsOverlay(QWidget):
                     ok, msg = bool(res), str(res)
             except Exception as e:
                 ok, msg = False, str(e)
+            if _sip.isdeleted(self):
+                return
             self._test_done.emit(ns, ok, msg)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -5645,7 +5732,12 @@ class _TelegramMessageCard(QFrame):
         body.addLayout(meta)
 
         chat = str(message.get("chat") or "Telegram")[:80]
-        text = QLabel(str(message.get("text") or "[сообщение без текста]")[:700])
+        media = message.get("media") if isinstance(message.get("media"), dict) else None
+        media_type = str(message.get("media_type") or (media or {}).get("type") or "").strip().lower()
+        text_value = str(message.get("text") or "").strip()
+        if not text_value:
+            text_value = "[вложение]" if media_type else "[сообщение без текста]"
+        text = QLabel(text_value[:700])
         text.setTextFormat(Qt.TextFormat.PlainText)
         text.setWordWrap(True)
         text.setFont(QFont(_FONT, 8))
@@ -5656,6 +5748,42 @@ class _TelegramMessageCard(QFrame):
         """)
         text.setToolTip(chat)
         body.addWidget(text)
+
+        if media_type and media_type not in ("", "none"):
+            badge = QLabel(media_type.upper())
+            badge.setFont(QFont(_FONT, 7, QFont.Weight.Bold))
+            badge.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+            body.addWidget(badge)
+
+        encoded = None
+        if isinstance(media, dict):
+            encoded = media.get("media_base64") or media.get("base64") or media.get("image_base64")
+        if isinstance(encoded, str) and encoded:
+            try:
+                raw = _base64.b64decode(encoded, validate=True)
+                pix = QPixmap()
+                pix.loadFromData(raw)
+                if not pix.isNull():
+                    img = QLabel()
+                    img.setPixmap(pix.scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                    img.setStyleSheet("background: transparent;")
+                    body.addWidget(img)
+            except Exception:
+                pass
+
+        transcript = None
+        if isinstance(media, dict):
+            transcript = media.get("transcript") or media.get("voice_transcript")
+        if not transcript:
+            transcript = message.get("transcript") or message.get("voice_transcript")
+        if isinstance(transcript, str) and transcript.strip():
+            voice = QLabel("🎤 " + transcript.strip()[:500])
+            voice.setTextFormat(Qt.TextFormat.PlainText)
+            voice.setWordWrap(True)
+            voice.setFont(QFont(_FONT, 8))
+            voice.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+            body.addWidget(voice)
+
         row.addLayout(body, 1)
 
 
@@ -5807,9 +5935,39 @@ class ChatWidget(QWidget):
         main.addWidget(self._telegram_panel, 0)
         main.addWidget(scroll, 1)
         self._scroll = scroll
+        self._stick_to_bottom = True
+        self._pending_message_scroll: bool | None = None
+        self._dialog_scroll_value = 0
+        self._last_stable_dialog_scroll_value = 0
+        self._programmatic_scroll = False
+        self._programmatic_scroll_until = 0.0
+        self._last_scroll_value = scroll.verticalScrollBar().value()
+        self._manual_scroll_pending = False
+        self._programmatic_scroll_until = 0.0
+        self._scroll_down_btn = QPushButton("↓", self)
+        self._scroll_down_btn.setFixedSize(34, 34)
+        self._scroll_down_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._scroll_down_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(12, 20, 40, 220); color: {C.PRI};
+                border: 1px solid {C.PRI}; border-radius: 17px;
+                font-size: 15px; font-weight: 700;
+            }}
+            QPushButton:hover {{ background: rgba(73, 233, 255, 40); }}
+        """)
+        self._scroll_down_btn.clicked.connect(self.scroll_to_bottom)
+        self._scroll_down_btn.hide()
+        try:
+            scroll.verticalScrollBar().valueChanged.connect(self._on_chat_scroll)
+        except Exception:
+            pass
         self._bubble_tmr = QTimer(self)
         self._bubble_tmr.setSingleShot(True)
-        self._bubble_tmr.timeout.connect(self._scroll_to_bottom)
+        self._bubble_tmr.timeout.connect(self._scroll_after_message)
+        self._scroll_snap_tmr = QTimer(self)
+        self._scroll_snap_tmr.setSingleShot(True)
+        self._scroll_snap_tmr.setInterval(110)
+        self._scroll_snap_tmr.timeout.connect(self._snap_scroll_to_bubble_boundary)
         self._telegram_tmr = QTimer(self)
         self._telegram_tmr.setSingleShot(True)
         self._telegram_tmr.timeout.connect(self._scroll_telegram_to_bottom)
@@ -5831,8 +5989,11 @@ class ChatWidget(QWidget):
                 str(message.get("sender") or ""),
                 str(message.get("date") or ""),
                 str(message.get("text") or ""),
+                str(message.get("media_type") or ""),
             )
-            if not key[3] or key in self._telegram_seen:
+            if not key[3] and not key[4]:
+                continue
+            if key in self._telegram_seen:
                 continue
             self._telegram_seen.add(key)
             self._tg_empty.hide()
@@ -5857,10 +6018,16 @@ class ChatWidget(QWidget):
 
     def _fit_bubbles(self):
         """Keep each message inside the visible conversation width."""
-        available = self._scroll.viewport().width()
+        scroll = getattr(self, "_scroll", None)
+        if scroll is None:
+            return
+        try:
+            available = scroll.viewport().width()
+        except Exception:
+            return
         if available <= 0:
             return
-        max_width = max(150, int(available * 0.86))
+        max_width = max(1, min(560, int(available * 0.86), available - 2))
         for i in range(self._lay.count()):
             item = self._lay.itemAt(i)
             bubble = item.widget() if item is not None else None
@@ -5870,15 +6037,266 @@ class ChatWidget(QWidget):
                     bubble._body.adjustSize()
                 bubble.updateGeometry()
                 bubble.adjustSize()
+        self._sync_container_height()
+
+    def _sync_container_height(self) -> None:
+        """Size the scroll content to the height it needs at the current width.
+
+        QScrollArea sizes its content widget from ``sizeHint()``, but a
+        QVBoxLayout computes that hint from each wrapped label's *preferred*
+        width. At the real viewport width the bubbles are much shorter, so the
+        container kept thousands of pixels of stale height and "scroll to
+        bottom" landed in blank space below the last message. Ask the layout
+        for its height-for-width at the actual width instead.
+        """
+        try:
+            width = int(self._scroll.viewport().width())
+            height = int(self._lay.heightForWidth(width))
+        except Exception:
+            return
+        if height <= 0:
+            return
+        try:
+            if self._container.height() != height:
+                self._container.setFixedHeight(height)
+        except Exception:
+            pass
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         QTimer.singleShot(0, self._fit_bubbles)
+        QTimer.singleShot(0, self._position_scroll_button)
+
+    def _is_at_bottom(self, tolerance: int = 24) -> bool:
+        scroll = getattr(self, "_scroll", None)
+        if scroll is None:
+            return True
+        try:
+            viewport = scroll.viewport()
+        except Exception:
+            return True
+        try:
+            bubble = self._last_chat_bubble()
+            if bubble is None:
+                return True
+            bottom = bubble.mapTo(viewport, QPoint(0, bubble.height())).y()
+            return -int(tolerance) <= bottom <= viewport.height() + int(tolerance)
+        except Exception:
+            return True
+
+    def _last_chat_bubble(self):
+        layout = getattr(self, "_lay", None)
+        if layout is None:
+            return None
+        for index in range(layout.count() - 1, -1, -1):
+            item = layout.itemAt(index)
+            bubble = item.widget() if item is not None else None
+            if isinstance(bubble, ChatBubble):
+                return bubble
+        return None
+
+    def _position_scroll_button(self) -> None:
+        btn = getattr(self, "_scroll_down_btn", None)
+        if btn is None:
+            return
+        try:
+            margin = 14
+            x = max(margin, self.width() - btn.width() - margin)
+            y = max(margin, self.height() - btn.height() - margin)
+            btn.move(x, y)
+            btn.raise_()
+        except Exception:
+            pass
+
+    def _update_scroll_button(self, *_args) -> None:
+        btn = getattr(self, "_scroll_down_btn", None)
+        if btn is None:
+            return
+        try:
+            self._position_scroll_button()
+            btn.setVisible(not self._is_at_bottom())
+            btn.raise_()
+        except Exception:
+            pass
+
+    def _on_chat_scroll(self, *_args) -> None:
+        """Track manual scrolling so hide/show and new messages respect the reader."""
+        value = self._scroll.verticalScrollBar().value()
+        if getattr(self, "_programmatic_scroll", False):
+            self._last_scroll_value = value
+            self._update_scroll_button()
+            return
+        pending = getattr(self, "_pending_message_scroll", None)
+        if pending is None:
+            self._manual_scroll_pending = value != self._last_scroll_value
+            self._last_scroll_value = value
+            self._stick_to_bottom = False
+            self._dialog_scroll_value = value
+            self._last_stable_dialog_scroll_value = value
+            timer = getattr(self, "_scroll_snap_tmr", None)
+            if timer is not None and self._manual_scroll_pending:
+                timer.start()
+        self._update_scroll_button()
+
+    def _snap_scroll_to_bubble_boundary(self) -> None:
+        """After manual scrolling, align the viewport to complete messages."""
+        if getattr(self, "_overview_mode", False):
+            return
+        scroll = getattr(self, "_scroll", None)
+        if scroll is None:
+            return
+        try:
+            bar = scroll.verticalScrollBar()
+            content = scroll.widget()
+            height = scroll.viewport().height()
+            current = bar.value()
+        except Exception:
+            return
+        if height <= 0:
+            return
+        self._manual_scroll_pending = True
+        preserve_read_position = True
+        previous_stickiness = self._stick_to_bottom
+
+        tops = []
+        for index in range(self._lay.count()):
+            item = self._lay.itemAt(index)
+            bubble = item.widget() if item is not None else None
+            if not isinstance(bubble, ChatBubble) or bubble.height() > height:
+                continue
+            tops.append(bubble.mapTo(content, QPoint(0, 0)).y())
+        if not tops:
+            return
+
+        # Starting at a bubble's top is not enough if the viewport bottom
+        # would cut through another bubble. Prefer a nearby top whose opposite
+        # edge falls in the gap between messages, leaving the unused area blank.
+        candidates = []
+        for top in tops:
+            start = top
+            end = top + height
+            cuts_bubble = False
+            for index in range(self._lay.count()):
+                item = self._lay.itemAt(index)
+                bubble = item.widget() if item is not None else None
+                if not isinstance(bubble, ChatBubble):
+                    continue
+                bubble_top = bubble.mapTo(content, QPoint(0, 0)).y()
+                bubble_bottom = bubble_top + bubble.height()
+                if bubble_top < start < bubble_bottom:
+                    cuts_bubble = True
+                    break
+                if bubble_top < end < bubble_bottom:
+                    cuts_bubble = True
+                    break
+            if not cuts_bubble:
+                if 0 <= top <= bar.maximum():
+                    candidates.append(top)
+        if not candidates:
+            candidates = []
+            for index in range(self._lay.count()):
+                item = self._lay.itemAt(index)
+                bubble = item.widget() if item is not None else None
+                if isinstance(bubble, ChatBubble):
+                    candidates.append(bubble.mapTo(content, QPoint(0, 0)).y() + bubble.height())
+
+        target = min(candidates, key=lambda value: abs(value - current))
+        target = min(max(0, int(target)), bar.maximum())
+        target_is_bottom = target >= bar.maximum() - 2
+        target_is_top = target <= 2
+        self._dialog_scroll_value = int(target)
+        self._last_stable_dialog_scroll_value = int(target)
+        self._programmatic_scroll = True
+        self._programmatic_scroll_until = time.monotonic() + 0.18
+        try:
+            bar.setValue(target)
+        finally:
+            self._programmatic_scroll = False
+        self._last_scroll_value = bar.value()
+        self._stick_to_bottom = False
+        self._manual_scroll_pending = False
+        self._dialog_scroll_value = int(target)
+        self._last_stable_dialog_scroll_value = int(target)
+        self._update_scroll_button()
+
+    def _scroll_after_message(self) -> None:
+        pending = getattr(self, "_pending_message_scroll", None)
+        should_stick = (
+            bool(pending) if pending is not None
+            else bool(getattr(self, "_stick_to_bottom", True))
+        )
+        self._pending_message_scroll = None
+        self._stick_to_bottom = should_stick
+        if should_stick:
+            self._scroll_to_bottom()
+        else:
+            self._update_scroll_button()
+
+    def _restore_chat_scroll(self, value: int, stick_to_bottom: bool) -> None:
+        timer = getattr(self, "_scroll_snap_tmr", None)
+        if timer is not None:
+            timer.stop()
+        self._manual_scroll_pending = False
+        if getattr(self, "_overview_mode", False):
+            self._dialog_scroll_value = max(0, int(value))
+            self._stick_to_bottom = bool(stick_to_bottom)
+            self._update_scroll_button()
+            return
+        if stick_to_bottom:
+            self._scroll_to_bottom()
+            return
+        try:
+            bar = self._scroll.verticalScrollBar()
+            self._programmatic_scroll = True
+            self._programmatic_scroll_until = time.monotonic() + 0.18
+            bar.setValue(min(max(0, int(value)), bar.maximum()))
+        except Exception:
+            pass
+        finally:
+            self._programmatic_scroll = False
+        self._stick_to_bottom = False
+        self._update_scroll_button()
 
     def _scroll_to_bottom(self):
-        bar = self._scroll.verticalScrollBar()
-        if bar:
-            bar.setValue(bar.maximum())
+        scroll = getattr(self, "_scroll", None)
+        if scroll is None:
+            return
+        try:
+            bar = scroll.verticalScrollBar()
+        except Exception:
+            return
+        bubble = self._last_chat_bubble()
+        if bubble is None:
+            if bar:
+                self._programmatic_scroll = True
+                self._programmatic_scroll_until = time.monotonic() + 0.18
+                try:
+                    bar.setValue(bar.maximum())
+                finally:
+                    self._programmatic_scroll = False
+        else:
+            try:
+                content = scroll.widget()
+                bottom = bubble.mapTo(content, QPoint(0, bubble.height())).y()
+                target = bottom - scroll.viewport().height()
+                self._programmatic_scroll = True
+                self._programmatic_scroll_until = time.monotonic() + 0.18
+                bar.setValue(min(max(0, target), bar.maximum()))
+            except Exception:
+                if bar:
+                    self._programmatic_scroll = True
+                    bar.setValue(bar.maximum())
+            finally:
+                self._programmatic_scroll = False
+        self._stick_to_bottom = True
+        self._update_scroll_button()
+
+    def hideEvent(self, event):
+        if self._manual_scroll_pending and not self._overview_mode:
+            self._snap_scroll_to_bubble_boundary()
+        elif self._stick_to_bottom:
+            self._dialog_scroll_value = self._scroll.verticalScrollBar().value()
+        super().hideEvent(event)
 
     def _scroll_telegram_to_bottom(self):
         bar = self._tg_scroll.verticalScrollBar()
@@ -5887,11 +6305,42 @@ class ChatWidget(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        QTimer.singleShot(0, self._scroll_to_bottom)
+        # Bubbles may have been created before the viewport had a real width
+        # (e.g. history loaded while the widget was still hidden), so re-fit
+        # them now that the geometry is known — otherwise long messages stay
+        # clipped to the pre-show 560 px fallback width.
+        QTimer.singleShot(0, self._fit_bubbles)
+        QTimer.singleShot(
+            0,
+            lambda: self._restore_chat_scroll(
+                self._dialog_scroll_value if (self._overview_mode or not self._stick_to_bottom) else self._scroll.verticalScrollBar().value(),
+                self._stick_to_bottom,
+            ),
+        )
 
     def _bubble_max_width(self) -> int:
-        available = self._scroll.viewport().width()
-        return max(150, int(available * 0.86)) if available > 0 else 560
+        scroll = getattr(self, "_scroll", None)
+        if scroll is None:
+            return 560
+        try:
+            available = scroll.viewport().width()
+        except Exception:
+            return 560
+        return max(1, min(560, int(available * 0.86), available - 2)) if available > 0 else 560
+
+    # Public convenience aliases — external callers (and tests) use these
+    # without the leading underscore.
+    def scroll_to_bottom(self) -> None:
+        self._scroll_to_bottom()
+
+    def is_at_bottom(self) -> bool:
+        return self._is_at_bottom()
+
+    def fit_bubbles(self) -> None:
+        self._fit_bubbles()
+
+    def bubble_max_width(self) -> int:
+        return self._bubble_max_width()
 
     def _history_path(self):
         try:
@@ -5901,8 +6350,30 @@ class ChatWidget(QWidget):
         d.mkdir(parents=True, exist_ok=True)
         return d / self.HISTORY_FILE
 
-    def _render_history(self) -> None:
+    def _render_history(self, scroll_state: tuple[int, bool] | None = None) -> None:
         """Rebuild visible bubbles while keeping every message in history."""
+        # Rebuilding the transcript changes the scroll range, which makes the
+        # bar emit synthetic valueChanged signals. Those are not the reader
+        # scrolling, so never let a pending snap drag the fresh view elsewhere.
+        timer = getattr(self, "_scroll_snap_tmr", None)
+        if timer is not None:
+            timer.stop()
+        self._manual_scroll_pending = False
+        if scroll_state is not None:
+            scroll_value, stick_to_bottom = scroll_state
+        elif self._overview_mode:
+            scroll_value = getattr(self, "_dialog_scroll_value", 0)
+            stick_to_bottom = getattr(self, "_stick_to_bottom", True)
+        else:
+            try:
+                bar = self._scroll.verticalScrollBar()
+                scroll_value = bar.value()
+                stick_to_bottom = self._is_at_bottom()
+            except Exception:
+                scroll_value = 0
+                stick_to_bottom = True
+            self._dialog_scroll_value = scroll_value
+            self._stick_to_bottom = stick_to_bottom
         while self._lay.count():
             item = self._lay.takeAt(0)
             widget = item.widget()
@@ -5925,13 +6396,32 @@ class ChatWidget(QWidget):
         self._lay.addStretch(1)
         self._container.adjustSize()
         self._container.updateGeometry()
-        QTimer.singleShot(0, self._scroll_to_bottom)
+        QTimer.singleShot(0, self._fit_bubbles)
+        QTimer.singleShot(
+            0, lambda value=scroll_value, stick=stick_to_bottom:
+            self._restore_chat_scroll(value, stick)
+        )
 
     def set_overview_mode(self, enabled: bool) -> None:
         enabled = bool(enabled)
         if enabled != self._overview_mode:
+            if enabled:
+                try:
+                    bar = self._scroll.verticalScrollBar()
+                    self._dialog_scroll_value = (
+                        self._last_stable_dialog_scroll_value
+                        if not self._stick_to_bottom
+                        else bar.value()
+                    )
+                    self._stick_to_bottom = self._is_at_bottom()
+                except Exception:
+                    self._dialog_scroll_value = 0
+                    self._stick_to_bottom = True
+            scroll_state = (
+                int(self._dialog_scroll_value), bool(self._stick_to_bottom)
+            )
             self._overview_mode = enabled
-            self._render_history()
+            self._render_history(scroll_state=scroll_state)
 
     def save_history(self):
         """Write the last HISTORY_MAX messages to disk (best-effort)."""
@@ -5973,6 +6463,11 @@ class ChatWidget(QWidget):
             print(f"[Chat] Не удалось загрузить историю: {e}")
 
     def add_message(self, speaker: str, text: str):
+        # Decide stickiness before the new bubble changes the scroll geometry.
+        if not self._overview_mode:
+            if self._pending_message_scroll is None:
+                self._pending_message_scroll = self._is_at_bottom()
+            self._stick_to_bottom = bool(self._pending_message_scroll)
         self._messages.append((speaker, text))
         if len(self._messages) > self.HISTORY_MAX:
             self._messages.pop(0)
@@ -5984,7 +6479,8 @@ class ChatWidget(QWidget):
             align = Qt.AlignmentFlag.AlignRight if speaker == "user" else Qt.AlignmentFlag.AlignLeft
             self._lay.insertWidget(self._lay.count() - 1, bubble, alignment=align)
         self._bubble_tmr.start(10)
-        QTimer.singleShot(0, self._scroll_to_bottom)
+        QTimer.singleShot(0, self._fit_bubbles)
+        QTimer.singleShot(0, self._update_scroll_button)
         if not self._save_pending:
             self._save_pending = True
             self._save_tmr.start(400)  # debounce bursts (viseme-fed replies)
@@ -7548,16 +8044,22 @@ class MainWindow(QMainWindow):
                     jpeg = buf.tobytes()
                     with self._cam_state_lock:
                         self._cam_latest_jpeg = jpeg
+                    if _sip.isdeleted(self):
+                        break
                     self._cam_frame_sig.emit(jpeg)
         except Exception as e:
             print(f"[Camera] Stream error: {e}")
         finally:
             if cap is not None:
                 cap.release()
-            with self._cam_state_lock:
-                self._cam_latest_jpeg = None
-            self._cam_stop.set()
-            self._cam_stream_sig.emit(False)
+            try:
+                with self._cam_state_lock:
+                    self._cam_latest_jpeg = None
+                self._cam_stop.set()
+            except RuntimeError:
+                pass
+            if not _sip.isdeleted(self):
+                self._cam_stream_sig.emit(False)
 
     def stop_camera_stream(self) -> None:
         self._cam_stop.set()
@@ -9209,6 +9711,8 @@ class MainWindow(QMainWindow):
                 payload = {"adb": True, "devices": device_snapshot()}
             except Exception:
                 payload = {"adb": False, "devices": []}
+            if _sip.isdeleted(self):
+                return
             self._devices_sig.emit(payload)
 
         threading.Thread(target=work, daemon=True, name="device-status").start()
@@ -9448,6 +9952,8 @@ class MainWindow(QMainWindow):
         add("⚙  НАСТРОЙКА АССИСТЕНТА", self._open_customize)
         add("○  АУДИОУСТРОЙСТВА", self._open_audio_devices)
         add("◆  ПАМЯТЬ", self._open_memory_panel)
+        add("⌑  КЛЮЧ GITHUB API", self._open_github_token_dialog)
+        add("💎  КЛЮЧИ GEMINI API", self._open_gemini_keys_dialog)
         add("✚  ПЛАГИНЫ", self._open_plugin_manager)
         add("⚙  НАСТРОЙКИ ПЛАГИНОВ", self._open_plugin_settings)
         w.adjustSize()
@@ -9554,6 +10060,11 @@ class MainWindow(QMainWindow):
                 self._wake_state()
             except Exception:
                 pass
+            # The window may be closed while the warm-up thread is still
+            # running (notably in tests). Emitting a signal on a deleted
+            # QObject raises RuntimeError in the worker thread.
+            if _sip.isdeleted(self):
+                return
             self._wake_btns_sig.emit()
 
         threading.Thread(target=work, daemon=True, name="wake-state-warm").start()
@@ -10396,8 +10907,15 @@ class MainWindow(QMainWindow):
             ow,
             oh,
         )
+        ov.closed.connect(
+            lambda overlay=ov: self.hud.set_gpu_face_suppressed(
+                False, owner=overlay
+            )
+        )
+        self.hud.set_gpu_face_suppressed(True, owner=ov)
         ov.closed.connect(lambda: setattr(self, "_remote_overlay", None))
         ov.show()
+        ov.raise_()
         self._remote_overlay = ov
         self._log.append_log(f"SYS: Ключ удалённого доступа создан — вручную: {manual or url}")
 
@@ -10732,14 +11250,18 @@ class MainWindow(QMainWindow):
             self._wake_btn.setEnabled(False)
 
             def _work():
+                def _log(message: str) -> None:
+                    if not _sip.isdeleted(self):
+                        self._log_sig.emit(f"SYS: {message}")
+
                 try:
                     from core.wake_word import install_and_download
 
-                    ok, msg = install_and_download(
-                        logger=lambda m: self._log_sig.emit(f"SYS: {m}")
-                    )
+                    ok, msg = install_and_download(logger=_log)
                 except Exception as e:
                     ok, msg = False, str(e)
+                if _sip.isdeleted(self):
+                    return
                 if ok and self.on_wake_toggle:
                     try:
                         self.on_wake_toggle(
@@ -10798,6 +11320,206 @@ class MainWindow(QMainWindow):
             """)
 
     # ── Customization ────────────────────────────────────────────────────────────
+
+    def _open_github_token_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Ключ GitHub API")
+        dialog.setModal(True)
+        dialog.setMinimumWidth(430)
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(10)
+
+        title = QLabel("ТОКЕН GITHUB")
+        title.setFont(QFont(_FONT, 10, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        layout.addWidget(title)
+
+        help_text = QLabel(
+            "Введите GitHub Personal Access Token с доступом только для чтения "
+            "публичных репозиториев. Ключ сохранится в локальных настройках JARVIS."
+        )
+        help_text.setWordWrap(True)
+        help_text.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        layout.addWidget(help_text)
+
+        field = QLineEdit()
+        field.setEchoMode(QLineEdit.EchoMode.Password)
+        field.setPlaceholderText("github_pat_…")
+        field.setText(str(_read_full_config().get("github_token") or ""))
+        field.setClearButtonEnabled(True)
+        field.setStyleSheet(f"""
+            QLineEdit {{ background: #000d12; color: {C.TEXT};
+                border: 1px solid {C.BORDER}; border-radius: 7px; padding: 7px; }}
+            QLineEdit:focus {{ border-color: {C.PRI}; }}
+        """)
+        layout.addWidget(field)
+
+        status = QLabel("")
+        status.setWordWrap(True)
+        status.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
+        layout.addWidget(status)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        clear_btn = QPushButton("Удалить ключ")
+        save_btn = QPushButton("Сохранить")
+        cancel_btn = QPushButton("Отмена")
+        for button in (clear_btn, save_btn, cancel_btn):
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            buttons.addWidget(button)
+        layout.addLayout(buttons)
+
+        def save_token():
+            token = field.text().strip()
+            if token and not (token.startswith("ghp_") or token.startswith("github_pat_")):
+                status.setText("Формат токена не похож на Personal Access Token GitHub.")
+                return
+            _save_cfg(github_token=token)
+            if _read_full_config().get("github_token", "") != token:
+                status.setText("Не удалось сохранить ключ в настройках JARVIS.")
+                return
+            status.setText("Ключ сохранён локально. Поиск GitHub использует его сразу.")
+
+        save_btn.clicked.connect(save_token)
+        clear_btn.clicked.connect(lambda: (field.clear(), save_token()))
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec()
+
+    def _open_gemini_keys_dialog(self):
+        """Диалог ввода ключей API: Gemini (основной + резервный), Groq и GitHub."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Ключи API (Gemini, Groq и GitHub)")
+        dialog.setModal(True)
+        dialog.setMinimumWidth(460)
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(12)
+
+        title = QLabel("КЛЮЧИ API")
+        title.setFont(QFont(_FONT, 10, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        layout.addWidget(title)
+
+        help_text = QLabel(
+            "Основной ключ Gemini используется по умолчанию. Если его квота исчерпана, "
+            "JARVIS автоматически переключится на второй (резервный) ключ. "
+            "Ключи Groq и GitHub используются как резервные провайдеры при полном "
+            "исчерпании всех ключей Gemini."
+        )
+        help_text.setWordWrap(True)
+        help_text.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        layout.addWidget(help_text)
+
+        cfg = _read_full_config()
+
+        def _lbl2(txt, fs=8, bold=False, color=C.TEXT_DIM):
+            w = QLabel(txt)
+            w.setFont(QFont(_FONT, _bump(fs), QFont.Weight.Bold if bold else QFont.Weight.Normal))
+            w.setStyleSheet(f"color: {color}; background: transparent;")
+            w.setWordWrap(True)
+            return w
+
+        # Основной ключ Gemini
+        layout.addWidget(_lbl2("КЛЮЧ GEMINI API (основной)"))
+        key1_field = QLineEdit()
+        key1_field.setEchoMode(QLineEdit.EchoMode.Password)
+        key1_field.setPlaceholderText("AIza…")
+        key1_field.setText(str(cfg.get("gemini_api_key") or ""))
+        key1_field.setClearButtonEnabled(True)
+        key1_field.setStyleSheet(f"""
+            QLineEdit {{ background: #000d12; color: {C.TEXT};
+                border: 1px solid {C.BORDER}; border-radius: 7px; padding: 7px; }}
+            QLineEdit:focus {{ border-color: {C.PRI}; }}
+        """)
+        layout.addWidget(key1_field)
+
+        # Второй ключ Gemini
+        layout.addWidget(_lbl2("КЛЮЧ GEMINI API (резервный)"))
+        key2_field = QLineEdit()
+        key2_field.setEchoMode(QLineEdit.EchoMode.Password)
+        key2_field.setPlaceholderText("AIza… (опционально)")
+        key2_field.setText(str(cfg.get("gemini_api_key_2") or ""))
+        key2_field.setClearButtonEnabled(True)
+        key2_field.setStyleSheet(f"""
+            QLineEdit {{ background: #000d12; color: {C.TEXT};
+                border: 1px solid {C.BORDER}; border-radius: 7px; padding: 7px; }}
+            QLineEdit:focus {{ border-color: {C.PRI}; }}
+        """)
+        layout.addWidget(key2_field)
+
+        # Ключ Groq
+        layout.addWidget(_lbl2("КЛЮЧ GROQ API"))
+        groq_field = QLineEdit()
+        groq_field.setEchoMode(QLineEdit.EchoMode.Password)
+        groq_field.setPlaceholderText("gsk_… (опционально)")
+        groq_field.setText(str(cfg.get("groq_api_key") or ""))
+        groq_field.setClearButtonEnabled(True)
+        groq_field.setStyleSheet(f"""
+            QLineEdit {{ background: #000d12; color: {C.TEXT};
+                border: 1px solid {C.BORDER}; border-radius: 7px; padding: 7px; }}
+            QLineEdit:focus {{ border-color: {C.PRI}; }}
+        """)
+        layout.addWidget(groq_field)
+
+        # Ключ GitHub (резервный провайдер)
+        layout.addWidget(_lbl2("КЛЮЧ GITHUB TOKEN (резервный провайдер)"))
+        github_field = QLineEdit()
+        github_field.setEchoMode(QLineEdit.EchoMode.Password)
+        github_field.setPlaceholderText("ghp_… (опционально)")
+        github_field.setText(str(cfg.get("github_api_key") or ""))
+        github_field.setClearButtonEnabled(True)
+        github_field.setStyleSheet(f"""
+            QLineEdit {{ background: #000d12; color: {C.TEXT};
+                border: 1px solid {C.BORDER}; border-radius: 7px; padding: 7px; }}
+            QLineEdit:focus {{ border-color: {C.PRI}; }}
+        """)
+        layout.addWidget(github_field)
+
+        status = QLabel("")
+        status.setWordWrap(True)
+        status.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
+        layout.addWidget(status)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        clear_btn = QPushButton("Очистить")
+        save_btn = QPushButton("Сохранить")
+        cancel_btn = QPushButton("Отмена")
+        for button in (clear_btn, save_btn, cancel_btn):
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            buttons.addWidget(button)
+        layout.addLayout(buttons)
+
+        def save_keys():
+            k1 = key1_field.text().strip()
+            k2 = key2_field.text().strip()
+            k3 = groq_field.text().strip()
+            k4 = github_field.text().strip()
+            if not k1:
+                status.setText("Основной ключ Gemini обязателен.")
+                status.setStyleSheet("color: #ff6b6b; background: transparent;")
+                return
+            _save_cfg(
+                gemini_api_key=k1,
+                gemini_api_key_2=k2 if k2 else "",
+                groq_api_key=k3 if k3 else "",
+                github_api_key=k4 if k4 else "",
+            )
+            from core import gemini as _gemini
+            _gemini.api_key(refresh=True)
+            status.setText("Ключи сохранены. Groq и GitHub будут использованы как резервные провайдеры.")
+            status.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+
+        def clear_keys():
+            key1_field.clear()
+            key2_field.clear()
+            groq_field.clear()
+            github_field.clear()
+            save_keys()
+
+        save_btn.clicked.connect(save_keys)
+        clear_btn.clicked.connect(clear_keys)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec()
 
     def _open_customize(self):
         cfg = _read_full_config()
@@ -11189,6 +11911,12 @@ class MainWindow(QMainWindow):
                 "sender_avatar": str(item.get("sender_avatar") or "")[:48_000],
                 "date": str(item.get("date") or "")[:40],
                 "text": str(item.get("text") or "[сообщение без текста]")[:700],
+                "media_type": str(item.get("media_type") or "")[:40],
+                "media": item.get("media") if isinstance(item.get("media"), dict) else None,
+                "transcript": str(item.get("transcript") or "")[:1000] or None,
+                "voice_transcript": str(item.get("voice_transcript") or "")[:1000] or None,
+                "has_media": bool(item.get("has_media")),
+                "attachments": item.get("attachments") if isinstance(item.get("attachments"), list) else [],
             })
         if safe:
             self._telegram_messages_sig.emit(safe)
@@ -11234,10 +11962,9 @@ class MainWindow(QMainWindow):
         self._update_statusbar()
 
     def _check_config(self) -> bool:
-        if not API_FILE.exists():
-            return False
         try:
-            d = json.loads(API_FILE.read_text(encoding="utf-8"))
+            from memory.config_manager import load_api_keys
+            d = load_api_keys()
             return bool(d.get("gemini_api_key")) and bool(d.get("os_system"))
         except Exception:
             return False
@@ -11256,12 +11983,18 @@ class MainWindow(QMainWindow):
         ov.show()
         self._overlay = ov
 
-    def _on_setup_done(self, key: str, os_name: str):
+    def _on_setup_done(self, key: str, key_2: str, os_name: str):
         os.makedirs(CONFIG_DIR, exist_ok=True)
-        API_FILE.write_text(
-            json.dumps({"gemini_api_key": key, "os_system": os_name}, indent=4),
-            encoding="utf-8",
-        )
+        # Читаем существующий конфиг, чтобы не стереть остальные настройки
+        try:
+            d = json.loads(API_FILE.read_text(encoding="utf-8")) if API_FILE.exists() else {}
+        except Exception:
+            d = {}
+        d["gemini_api_key"] = key.strip()
+        if key_2.strip():
+            d["gemini_api_key_2"] = key_2.strip()
+        d["os_system"] = os_name.strip()
+        API_FILE.write_text(json.dumps(d, indent=4), encoding="utf-8")
         self._ready = True
         if self._overlay:
             self._overlay.hide()

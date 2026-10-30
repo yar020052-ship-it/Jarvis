@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import requests
+
 _API = "https://api.github.com/search/repositories"
 
 
@@ -26,16 +29,25 @@ def github_scout(parameters: dict | None = None, **_kwargs) -> str:
         q += f" stars:>={min_stars}"
 
     try:
-        import requests
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "JARVIS-GitHub-Scout/1.0",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        token = ""
+        try:
+            from core.paths import load_config
 
+            token = str(load_config("api_keys.json").get("github_token") or "").strip()
+        except Exception:
+            pass
+        token = token or os.environ.get("GITHUB_TOKEN", "").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         response = requests.get(
             _API,
             params={"q": q, "sort": "updated", "order": "desc", "per_page": 15},
-            headers={
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "JARVIS-GitHub-Scout/1.0",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
+            headers=headers,
             timeout=(8, 20),
         )
         if response.status_code == 403 and response.headers.get("X-RateLimit-Remaining") == "0":

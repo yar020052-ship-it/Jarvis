@@ -95,3 +95,8 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [".git", ".venv", "vendor_scout", "build", "dist", "__pycache__"]
+filterwarnings = ["ignore::DeprecationWarning"]

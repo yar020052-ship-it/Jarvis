@@ -31,13 +31,35 @@ preferred and older releases excluded from the runtime fallback ladder.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import logging
+import os
 import re
 import sys
-import time
 import threading
+import time
 from datetime import datetime, timedelta
-from core.paths import get_config_path, load_config
+from pathlib import Path
+
+from core.paths import CONFIG_DIR, LOGS_DIR, get_config_path, load_config
+
+# ── Логирование Gemini на русском (консоль + файл) ───────────────────────
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+_GEMINI_LOG_FILE = LOGS_DIR / "jarvis_gemini.ru.log"
+
+logger = logging.getLogger("jarvis.gemini")
+logger.setLevel(logging.INFO)
+logger.propagate = False  # не дублировать через корневой логгер
+
+if not logger.handlers:
+    _fmt = logging.Formatter("%(asctime)s [Gemini] %(message)s", datefmt="%d.%m.%Y %H:%M:%S")
+    _fh = logging.FileHandler(_GEMINI_LOG_FILE, encoding="utf-8")
+    _fh.setFormatter(_fmt)
+    logger.addHandler(_fh)
+    _sh = logging.StreamHandler(sys.stdout)
+    _sh.setFormatter(_fmt)
+    logger.addHandler(_sh)
 
 # Task profiles, tried left to right. Keep model choice here so each task gets
 # an appropriate model and a consistent fallback policy.
@@ -60,16 +82,17 @@ LIVE = "live"
 _LADDERS = {
     FAST: (
         "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
         "gemini-3.6-flash",
         "gemini-3.8-flash",
         LIVE,
     ),
     SMART: (
         "gemini-3.8-flash",
-        "gemini-4-argon",
         "gemini-3.6-flash",
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
+        "gemini-4-argon",
         LIVE,
     ),
     CODE: (
@@ -94,18 +117,18 @@ _LADDERS = {
         LIVE,
     ),
     STRATEGY: (
-        "gemini-4-argon",
         "gemini-3.8-flash",
         "gemini-3.6-flash",
+        "gemini-4-argon",
         LIVE,
     ),
     # Grounding metadata is required, so this route deliberately has no Live.
     SEARCH: (
-        "gemini-4-argon",
         "gemini-3.8-flash",
         "gemini-3.6-flash",
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
+        "gemini-4-argon",
     ),
 }
 
@@ -142,25 +165,38 @@ def models_for_task(task: str) -> tuple[str, ...]:
 def describe_routes() -> str:
     """Describe the configured task router in a concise, user-facing form."""
     lines = [f"Диалог и голос: {live_model()}."]
+    fallbacks = []
+    if _groq_available():
+        fallbacks.append("Groq (резерв)")
+    if _github_available():
+        fallbacks.append("GitHub (резерв)")
     for task, tier in TASK_TIERS.items():
         models = ["Gemini Live (резерв)" if model == LIVE else model
                   for model in _LADDERS[tier]]
-        lines.append(f"{_TASK_LABELS[task]}: " + " → ".join(models) + ".")
+        suffix = " → " + " → ".join(fallbacks) if fallbacks else ""
+        lines.append(f"{_TASK_LABELS[task]}: " + " → ".join(models) + suffix + ".")
     return " ".join(lines)
 
 
 def route_snapshot() -> dict:
     """Return the current task routes for the desktop status panel."""
+    fallbacks = []
+    if _groq_available():
+        fallbacks.append("Groq (резерв)")
+    if _github_available():
+        fallbacks.append("GitHub (резерв)")
     tasks = []
     for task, tier in TASK_TIERS.items():
         chain = _LADDERS[tier]
         display = ["Gemini Live (резерв)" if model == LIVE else model
                    for model in chain]
+        if fallbacks:
+            display = display + fallbacks
         tasks.append({
             "task": task,
             "label": _TASK_LABELS[task],
             "models": display,
-            "cooling": [name for model, name in zip(chain, display)
+            "cooling": [name for model, name in zip(chain, display, strict=False)
                         if _cooling(model)],
         })
     return {"live_model": live_model(), "tasks": tasks}
@@ -287,6 +323,7 @@ def timeout_ms_for(profile: str = "default", fallback_ms: int | None = None) -> 
 
 _key_lock = threading.Lock()
 _cached_key: str | None = None
+_cached_key_2: str | None = None
 _cached_key_signature: tuple[str, int, int] | None = None
 
 # A rung that answered 429 is out of quota, and on the free tier it will stay
@@ -311,6 +348,125 @@ _cool_lock = threading.Lock()
 _ollama_cooldown_until: float = 0.0
 _ollama_failures: int = 0
 _ollama_lock = threading.Lock()
+
+
+# ── Локальный учёт квоты Gemini (чтобы не слать битые запросы) ──────────────
+_QUOTA_STATE_FILE = CONFIG_DIR / "quota_state.json"
+
+# Дефолтные лимиты для бесплатного tier Gemini (запрос/минуту, запрос/сутки)
+_DEFAULT_RPM = 15
+_DEFAULT_RPD = 1500
+
+
+def _key_fingerprint(key: str) -> str:
+    """Короткий отпечаток ключа для хранения в состоянии квоты (без открытого ключа)."""
+    if not key:
+        return ""
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
+class QuotaTracker:
+    """Отслеживает количество запросов по каждому ключу, чтобы не слать
+    вызовы, которые с высокой вероятностью получат 429 из-за исчерпания квоты."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state: dict = {}
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            if _QUOTA_STATE_FILE.exists():
+                self._state = json.loads(_QUOTA_STATE_FILE.read_text(encoding="utf-8"))
+                if not isinstance(self._state, dict):
+                    self._state = {}
+            else:
+                self._state = {}
+        except Exception:
+            self._state = {}
+
+    def _save(self) -> None:
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            _QUOTA_STATE_FILE.write_text(
+                json.dumps(self._state, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+    def _limits(self, fingerprint: str) -> tuple[int, int]:
+        key_entry = self._state.get("keys", {}).get(fingerprint, {})
+        custom = key_entry.get("limits", {})
+        rpm = int(custom.get("rpm", _DEFAULT_RPM))
+        rpd = int(custom.get("rpd", _DEFAULT_RPD))
+        return rpm, rpd
+
+    def _prune(self, key_entry: dict, now: float) -> None:
+        """Удаляет старые таймстампы (старше суток)."""
+        day_ago = now - 86400
+        key_entry["requests"] = [t for t in key_entry.get("requests", []) if t > day_ago]
+
+    def can_proceed(self, key: str) -> bool:
+        """Возвращает True, если по оценке можно слать запрос на этот ключ."""
+        if not key:
+            return False
+        fp = _key_fingerprint(key)
+        with self._lock:
+            now = time.monotonic()
+            keys_state = self._state.setdefault("keys", {})
+            entry = keys_state.get(fp)
+            if entry is None:
+                entry = {"requests": [], "last_429": 0.0}
+                keys_state[fp] = entry
+            self._prune(entry, now)
+            rpm, rpd = self._limits(fp)
+            requests = entry.get("requests", [])
+            last_429 = entry.get("last_429", 0.0)
+            # Если был 429 менее чем 5 минут назад — не слать.
+            if now - last_429 < 300:
+                return False
+            # Если за последнюю минуту уже было >= rpm — не слать.
+            minute_ago = now - 60
+            recent = [t for t in requests if t > minute_ago]
+            if len(recent) >= rpm:
+                return False
+            # Если за сутки уже было >= rpd — не слать.
+            if len(requests) >= rpd:
+                return False
+            return True
+
+    def record(self, key: str, success: bool, is_quota_error: bool = False) -> None:
+        """Записывает результат вызова для учёта квоты."""
+        if not key:
+            return
+        fp = _key_fingerprint(key)
+        with self._lock:
+            now = time.monotonic()
+            keys_state = self._state.setdefault("keys", {})
+            entry = keys_state.get(fp)
+            if entry is None:
+                entry = {"requests": [], "last_429": 0.0}
+                keys_state[fp] = entry
+            self._prune(entry, now)
+            entry.setdefault("requests", []).append(now)
+            if is_quota_error:
+                entry["last_429"] = now
+            self._save()
+
+    def set_limits(self, key: str, rpm: int | None = None, rpd: int | None = None) -> None:
+        fp = _key_fingerprint(key)
+        with self._lock:
+            keys_state = self._state.setdefault("keys", {})
+            entry = keys_state.setdefault(fp, {"requests": [], "last_429": 0.0})
+            limits = entry.setdefault("limits", {})
+            if rpm is not None:
+                limits["rpm"] = rpm
+            if rpd is not None:
+                limits["rpd"] = rpd
+            self._save()
+
+
+_quota = QuotaTracker()
 
 
 def _cool(model: str, seconds: float = _COOLDOWN_SECONDS) -> None:
@@ -354,8 +510,17 @@ def _quota_cooldown(err: str) -> float:
 
 
 def _quota_rest_label(seconds: float) -> str:
-    """Human-readable rest duration for the operator console."""
-    return f"{seconds // 60:.0f} minutes" if seconds >= 60 else f"{seconds:.0f} seconds"
+    """Human-readable rest duration for the operator console (RU)."""
+    minutes = seconds // 60
+    if minutes >= 60:
+        hours = minutes // 60
+        mins = minutes % 60
+        if mins == 0:
+            return f"{hours:.0f} часов"
+        return f"{hours:.0f} ч {mins:.0f} мин"
+    if minutes > 0:
+        return f"{minutes:.0f} минут"
+    return f"{seconds:.0f} сек"
 
 
 def is_quota_error(err: str) -> bool:
@@ -426,17 +591,11 @@ def note_live_failure(model: str, err: str) -> bool:
     if is_quota_error(err):
         rest = _quota_cooldown(err)
         _cool(model, rest)
-        print(
-            f"[Gemini] Live model {model} is out of quota — "
-            f"switching for {_quota_rest_label(rest)}."
-        )
+        logger.warning(f"модель Live {model} превысила квоту — пропуск на {_quota_rest_label(rest)}.")
         return True
     if is_gone_error(err):
         _cool(model, _GONE_SECONDS)
-        print(
-            f"[Gemini] Live model {model} is unavailable to this key — "
-            f"setting it aside."
-        )
+        logger.warning(f"модель Live {model} недоступна для этого ключа — откладываем в сторону.")
         return True
     return False
 
@@ -450,9 +609,13 @@ def _cooling(model: str) -> bool:
         return False
 
 
-def api_key(refresh: bool = False) -> str:
-    """The Gemini key from config/api_keys.json. Cached; never raises."""
-    global _cached_key, _cached_key_signature
+def api_key(refresh: bool = False, key_num: int = 1) -> str:
+    """The Gemini key from config/api_keys.json. Cached; never raises.
+
+    key_num selects which configured key is returned: 1 is the primary,
+    2 is the fallback key configured for quota exhaustion.
+    """
+    global _cached_key, _cached_key_2, _cached_key_signature
     with _key_lock:
         path = get_config_path("api_keys.json")
         try:
@@ -465,19 +628,26 @@ def api_key(refresh: bool = False) -> str:
             and not refresh
             and signature == _cached_key_signature
         ):
-            return _cached_key
+            return _cached_key_2 if key_num == 2 else _cached_key
         try:
             from core.secrets import get_secret
 
             secret = get_secret("gemini_api_key")
+            secret_2 = get_secret("gemini_api_key_2")
         except Exception:  # pragma: no cover
-            secret = None
+            secret = secret_2 = None
         if secret:
             _cached_key = secret
         else:
             _cached_key = str(load_config("api_keys.json").get("gemini_api_key") or "")
+        if secret_2:
+            _cached_key_2 = secret_2
+        else:
+            _cached_key_2 = str(
+                load_config("api_keys.json").get("gemini_api_key_2") or ""
+            )
         _cached_key_signature = signature
-        return _cached_key
+        return _cached_key_2 if key_num == 2 else _cached_key
 
 
 def client(
@@ -687,6 +857,209 @@ def _live_call(contents, config, timeout_ms: int, key: str):
         raise box["error"]
     text = box.get("text")
     return _Reply(text) if text else None
+
+
+_gqt_lock = threading.Lock()
+_groq_cooldown_until: float = 0.0
+_gqt_failures: int = 0
+
+
+def groq_key() -> str:
+    """The Groq API key from config/env. Cached briefly, never raises."""
+    try:
+        from memory.config_manager import load_api_keys
+
+        cfg = load_api_keys() or {}
+    except Exception:
+        cfg = {}
+    return str(
+        cfg.get("groq_api_key")
+        or os.environ.get("GROQ_API_KEY", "")
+        or ""
+    ).strip()
+
+
+def github_key() -> str:
+    """The GitHub token from config/env (fallback for inference/models)."""
+    try:
+        from memory.config_manager import load_api_keys
+
+        cfg = load_api_keys() or {}
+    except Exception:
+        cfg = {}
+    return str(
+        cfg.get("github_api_key")
+        or os.environ.get("GITHUB_TOKEN", "")
+        or ""
+    ).strip()
+
+
+def _groq_available() -> bool:
+    """True when a Groq key is configured."""
+    return bool(groq_key())
+
+
+def _groq_call(contents, config=None, timeout_ms: int | None = None):
+    """Run one generation through the Groq API as a fallback provider."""
+    key = groq_key()
+    if not key:
+        return None
+
+    if config is not None and getattr(config, "tools", None):
+        return None
+
+    import base64 as _b64
+
+    items = contents if isinstance(contents, (list, tuple)) else [contents]
+    text_parts: list[str] = []
+    images: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            text_parts.append(item)
+            continue
+        blob = getattr(item, "inline_data", None)
+        if blob is not None:
+            data = getattr(blob, "data", None)
+            if isinstance(data, (bytes, bytearray)):
+                images.append(_b64.b64encode(bytes(data)).decode("ascii"))
+            continue
+        txt = getattr(item, "text", None)
+        if txt:
+            text_parts.append(str(txt))
+        elif isinstance(item, dict):
+            if item.get("role") == "user":
+                tp = item.get("parts", {}).get("text", "")
+                if tp:
+                    text_parts.append(str(tp))
+            elif "text" in item:
+                text_parts.append(str(item["text"]))
+    prompt = "\n".join(part for part in text_parts if part.strip())
+    if not prompt.strip() and not images:
+        return None
+
+    system = ""
+    if config is not None:
+        system = (
+            getattr(config, "system_instruction", None)
+            or (config.get("system_instruction") if isinstance(config, dict) else "")
+            or ""
+        )
+
+    messages = []
+    if system.strip():
+        messages.append({"role": "system", "content": system.strip()})
+    if images:
+        content: list = [{"type": "text", "text": prompt}] if prompt.strip() else []
+        for img in images:
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}})
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": prompt})
+
+    timeout = max(10.0, (timeout_ms or 60_000) / 1000.0)
+    try:
+        from groq import Groq
+
+        client = Groq(api_key=key, timeout=timeout)
+        resp = client.chat.completions.create(
+            model="llama-3.1-70b-versatile",
+            messages=messages,
+        )
+        text = str(resp.choices[0].message.content or "").strip()
+        if not text:
+            return None
+        return _Reply(text)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"groq: {type(exc).__name__}: {str(exc)[:140]}")
+        with _gqt_lock:
+            _gqt_failures += 1
+            if _gqt_failures >= 3:
+                _groq_cooldown_until = time.monotonic() + 300.0
+                _gqt_failures = 0
+        return None
+
+
+def _github_available() -> bool:
+    """True when a GitHub token is configured."""
+    return bool(github_key())
+
+
+def _github_call(contents, config=None, timeout_ms: int | None = None):
+    """Run one generation through GitHub Models as a fallback provider."""
+    key = github_key()
+    if not key:
+        return None
+
+    if config is not None and getattr(config, "tools", None):
+        return None
+
+    import base64 as _b64
+
+    items = contents if isinstance(contents, (list, tuple)) else [contents]
+    text_parts: list[str] = []
+    images: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            text_parts.append(item)
+            continue
+        blob = getattr(item, "inline_data", None)
+        if blob is not None:
+            data = getattr(blob, "data", None)
+            if isinstance(data, (bytes, bytearray)):
+                images.append(_b64.b64encode(bytes(data)).decode("ascii"))
+            continue
+        txt = getattr(item, "text", None)
+        if txt:
+            text_parts.append(str(txt))
+        elif isinstance(item, dict):
+            if item.get("role") == "user":
+                tp = item.get("parts", {}).get("text", "")
+                if tp:
+                    text_parts.append(str(tp))
+            elif "text" in item:
+                text_parts.append(str(item["text"]))
+    prompt = "\n".join(part for part in text_parts if part.strip())
+    if not prompt.strip() and not images:
+        return None
+
+    system = ""
+    if config is not None:
+        system = (
+            getattr(config, "system_instruction", None)
+            or (config.get("system_instruction") if isinstance(config, dict) else "")
+            or ""
+        )
+
+    messages = []
+    if system.strip():
+        messages.append({"role": "system", "content": system.strip()})
+    if images:
+        content: list = [{"type": "text", "text": prompt}] if prompt.strip() else []
+        for img in images:
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}})
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": prompt})
+
+    timeout = max(10.0, (timeout_ms or 60_000) / 1000.0)
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(
+            base_url="https://models.inference.ai.redhat.com",
+        )
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            timeout=timeout,
+        )
+        text = str(resp.choices[0].message.content or "").strip()
+        if not text:
+            return None
+        return _Reply(text)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"github: {type(exc).__name__}: {str(exc)[:140]}")
+        return None
 
 
 def ollama_base_url() -> str:
@@ -908,7 +1281,7 @@ def call(
     # Prefer a local, free model for long-running work such as HOI4 planning
     # when one is available. This keeps the assistant playing without touching
     # the (quota-limited) Gemini ladder.
-    global _ollama_failures, _ollama_cooldown_until
+    global _ollama_failures, _ollama_cooldown_until, _gqt_failures, _groq_cooldown_until
     if ollama_available() and time.monotonic() >= _ollama_cooldown_until:
         local_model = ollama_model_for(tier)
         try:
@@ -917,64 +1290,134 @@ def call(
             if reply is not None and getattr(reply, "text", None):
                 with _ollama_lock:
                     _ollama_failures = 0
-                print(f"[Gemini] task={tier} selected=ollama/{local_model}")
+                logger.info(f"задача={tier} выбрана модель ollama/{local_model}")
                 return reply
             raise RuntimeError("empty reply from Ollama")
         except Exception as exc:  # noqa: BLE001
-            print(f"[Gemini] ollama: {type(exc).__name__}: {str(exc)[:140]}")
+            logger.warning(f"ollama: {type(exc).__name__}: {str(exc)[:140]}")
             with _ollama_lock:
                 _ollama_failures += 1
                 if _ollama_failures >= 3:
                     _ollama_cooldown_until = time.monotonic() + 300.0
                     _ollama_failures = 0
 
-    resolved_key = key or api_key()
-    if not resolved_key:
-        print("[Gemini] no Gemini API key is configured")
-        return None
+    # Собираем доступные ключи в порядке приоритета: явно переданный,
+    # затем основной (ключ 1), затем резервный (ключ 2).
+    keys = []
+    if key:
+        keys.append(("explicit", key))
+    k1 = api_key(key_num=1)
+    if k1:
+        keys.append(("primary", k1))
+    k2 = api_key(key_num=2)
+    if k2:
+        keys.append(("fallback", k2))
+
+    if not keys:
+        logger.warning("[Gemini] не настроен ключ API Gemini")
+        # Gemini keys are exhausted — still try alternative providers below.
+
+    # Порядок попыток: сначала самые сильные модели из лесенки, каждая
+    # перебирается на всех доступных ключах (сначала основной, потом резервный).
+    # Это гарантирует, что сильнейшие модели используются в первую очередь на
+    # обоих ключах, и только при их полном исчерпании переходим к следующей модели.
+    attempts = []
+    for model in ladder:
+        if _cooling(model):
+            continue
+        for label, k in keys:
+            attempts.append((model, label, k))
+
+    if not attempts:
+        # Все модели отдыхают — всё равно попробуем, чтобы не молчать.
+        for model in ladder:
+            for label, k in keys:
+                attempts.append((model, label, k))
 
     cl = None
-    tried = [m for m in ladder if not _cooling(m)] or list(ladder)
-    for model in tried:
+    current_key = None
+    both_keys_drained = False  # если оба ключа упали по квоте на одной модели — fallback для остальных не нужен
+    for model, label, k in attempts:
+        if both_keys_drained and label == "fallback":
+            continue  # второй ключ скорее всего тоже пуст — не тратим время на лишний запрос
         try:
             if model == LIVE:
-                reply = _live_call(contents, config, timeout_ms, resolved_key)
+                reply = _live_call(contents, config, timeout_ms, k)
                 if reply is not None:
-                    print(f"[Gemini] task={tier} selected={model}")
+                    logger.info(f"задача={tier} выбрана модель={model} [{label}]")
                     return reply
                 raise RuntimeError("the Live turn came back empty")
-            if cl is None:
+            if cl is None or current_key != k:
                 cl = client(
                     timeout_ms=timeout_ms,
-                    key=resolved_key,
+                    key=k,
                     profile=timeout_profile,
                 )
+                current_key = k
+            # Проверяем локальную оценку квоты перед реальным запросом,
+            # чтобы не тратить время на холостые вызовы с таймаутом.
+            if not _quota.can_proceed(k):
+                logger.warning(
+                    f"{model} [{label}]: локальная оценка квоты исчерпана — "
+                    f"пропуск без запроса"
+                )
+                continue
             kwargs = {"model": model, "contents": contents}
             if config is not None:
                 kwargs["config"] = config
             response = cl.models.generate_content(**kwargs)
-            print(f"[Gemini] task={tier} selected={model}")
+            _quota.record(k, True)
+            logger.info(f"задача={tier} выбрана модель={model} [{label}]")
             return response
         except Exception as e:
             msg = str(e)
             if is_quota_error(msg):
                 rest = _quota_cooldown(msg)
                 _cool(model, rest)
-                print(
-                    f"[Gemini] {model}: out of quota — skipping it for "
+                _quota.record(k, False, is_quota_error=True)
+                if label == "fallback":
+                    both_keys_drained = True
+                    logger.warning(
+                        f"{model} [fallback]: квота исчерпана на обоих ключах — "
+                        f"для остальных моделей пробуем только основной ключ."
+                    )
+                logger.warning(
+                    f"{model} [{label}]: превышена квота — пропуск на "
                     f"{_quota_rest_label(rest)}"
                 )
+                continue
             elif is_gone_error(msg):
                 _cool(model, _GONE_SECONDS)
-                print(f"[Gemini] {model}: unavailable to this key — set aside")
+                logger.warning(
+                    f"{model} [{label}]: недоступен для этого ключа — откладываем в сторону"
+                )
+                continue
             elif is_unavailable_error(msg):
                 _cool(model, _UNAVAILABLE_SECONDS)
-                print(
-                    f"[Gemini] {model}: not answering — resting it for "
-                    f"{_UNAVAILABLE_SECONDS // 60} minutes"
+                logger.warning(
+                    f"{model} [{label}]: не отвечает — отдыхает "
+                    f"{_UNAVAILABLE_SECONDS // 60} минут"
                 )
+                continue
             else:
-                print(f"[Gemini] {model}: {type(e).__name__}: {msg[:140]}")
+                logger.warning(f"{model} [{label}]: {type(e).__name__}: {msg[:140]}")
+                continue
+
+    # Gemini ladder exhausted — fall back to alternative providers.
+    if _groq_available() and time.monotonic() >= _groq_cooldown_until:
+        reply = _groq_call(contents, config=config, timeout_ms=timeout_ms)
+        if reply is not None and getattr(reply, "text", None):
+            with _gqt_lock:
+                _gqt_failures = 0
+            logger.info(f"задача={tier} выбрана модель=groq")
+            return reply
+
+    if _github_available():
+        reply = _github_call(contents, config=config, timeout_ms=timeout_ms)
+        if reply is not None and getattr(reply, "text", None):
+            logger.info(f"задача={tier} выбрана модель=github")
+            return reply
+
     return None
 
 
@@ -1013,5 +1456,5 @@ def as_json(
     try:
         return json.loads(raw)
     except Exception as e:
-        print(f"[Gemini] reply was not JSON: {e}")
+        logger.warning(f"ответ не JSON: {e}")
         return default

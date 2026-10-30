@@ -368,6 +368,9 @@ class HoloAvatar:
         st = (state or "").upper()
         thinking = st in ("THINKING", "PROCESSING")
         asleep = st in ("SLEEPING", "STANDBY", "OFFLINE")
+        surprised = st in ("SURPRISED", "ALERT", "EXCITED")
+        confused = st in ("CONFUSED", "UNCERTAIN")
+        happy = st in ("HAPPY", "JOYFUL", "PLEASED")
 
         if thinking:
             # People look away to think, and hold it. The direction re-rolls
@@ -382,6 +385,18 @@ class HoloAvatar:
         elif asleep:
             self._bias_tgt = [0.0, -0.25]
             brow_bias, lid_tgt = -0.05, 0.22
+        elif surprised:
+            self._bias_tgt = [0.0, 0.0]
+            self._bias_at = 0.0
+            brow_bias, lid_tgt = 0.6, 1.0  # brows up, eyes wide
+        elif confused:
+            self._bias_tgt = [random.choice((-0.5, 0.5)), 0.1]
+            self._bias_at = t + 0.8
+            brow_bias, lid_tgt = -0.15, 0.95  # one brow up
+        elif happy:
+            self._bias_tgt = [0.0, 0.0]
+            self._bias_at = 0.0
+            brow_bias, lid_tgt = 0.15, 1.0  # slight smile, relaxed
         else:
             # LISTENING / idle / speaking: eyes come back to the user.
             self._bias_tgt = [0.0, 0.0]

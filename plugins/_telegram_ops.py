@@ -661,31 +661,46 @@ def synthesize(text: str) -> dict:
     import shutil
     import subprocess
 
-    from providers import audio as pa
-
     _, pid = tts_ready()
-    tts = _build(pid)
+    if pid == "system_tts":
+        # The system TTS provider is the fallback path built on core.device_tts,
+        # which uses Gemini's Live TTS directly — no ``providers`` package needed.
+        from core.device_tts import SAMPLE_RATE, synth_pcm
 
-    async def _collect() -> bytes:
-        out: list[bytes] = []
-        # Russian is the assistant's fixed spoken language.
-        try:
-            stream = tts.speak(text, language="ru")
-        except TypeError:
-            stream = tts.speak(text)
-        async for piece in stream:
-            out.append(piece)
-        return b"".join(out)
+        pcm = asyncio.run(asyncio.to_thread(synth_pcm, text))
+        if not pcm:
+            raise RuntimeError(
+                "The voice produced no sound. Check the voice in "
+                "ENGINE & PROVIDERS — some system voices return "
+                "silence for a language they do not have."
+            )
+        seconds = max(1, int(len(pcm) / (SAMPLE_RATE * 2)))
+        wav = _pcm_to_wav(pcm, SAMPLE_RATE)
+    else:
+        from providers import audio as pa
 
-    pcm = asyncio.run(_collect())
-    if not pcm:
-        raise RuntimeError(
-            "The voice produced no sound. Check the voice in "
-            "ENGINE & PROVIDERS — some system voices return "
-            "silence for a language they do not have."
-        )
-    seconds = max(1, int(pa.duration_s(pcm, pa.SPEAKER_RATE)))
-    wav = pa.to_wav(pcm, pa.SPEAKER_RATE)
+        tts = _build(pid)
+
+        async def _collect() -> bytes:
+            out: list[bytes] = []
+            # Russian is the assistant's fixed spoken language.
+            try:
+                stream = tts.speak(text, language="ru")
+            except TypeError:
+                stream = tts.speak(text)
+            async for piece in stream:
+                out.append(piece)
+            return b"".join(out)
+
+        pcm = asyncio.run(_collect())
+        if not pcm:
+            raise RuntimeError(
+                "The voice produced no sound. Check the voice in "
+                "ENGINE & PROVIDERS — some system voices return "
+                "silence for a language they do not have."
+            )
+        seconds = max(1, int(pa.duration_s(pcm, pa.SPEAKER_RATE)))
+        wav = pa.to_wav(pcm, pa.SPEAKER_RATE)
 
     if shutil.which("ffmpeg"):
         try:
@@ -727,6 +742,22 @@ def synthesize(text: str) -> dict:
         "mime": "audio/wav",
         "seconds": seconds,
     }
+
+
+def _pcm_to_wav(pcm: bytes, sample_rate: int) -> bytes:
+    """Minimal WAV writer for 16-bit mono PCM (no extra dependency)."""
+    import struct
+
+    n = len(pcm)
+    return (
+        b"RIFF"
+        + struct.pack("<I", 36 + n)
+        + b"WAVEfmt "
+        + struct.pack("<HHIIHH", 1, 1, sample_rate, sample_rate * 2, 2, 16)
+        + b"data"
+        + struct.pack("<I", n)
+        + pcm
+    )
 
 
 # -- the one entry point telegram_remote.py uses ------------------------------

@@ -65,10 +65,47 @@ def save_api_keys(gemini_api_key: str) -> None:
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+CONFIG_VERSION = 2
+
+
+def _migrate_config(data: dict) -> dict:
+    """Migrate config to the latest version."""
+    version = data.get("_config_version", 0)
+    if version < 1:
+        # v0 -> v1: ensure gemini_api_key_2 field exists
+        if "gemini_api_key_2" not in data:
+            data["gemini_api_key_2"] = ""
+        version = 1
+    if version < 2:
+        # v1 -> v2: ensure ollama and timeout fields exist
+        if "ollama_base_url" not in data:
+            data["ollama_base_url"] = "http://127.0.0.1:11434"
+        if "ollama_model" not in data:
+            data["ollama_model"] = "qwen2.5-coder:14b"
+        if "gemini_request_timeout_ms" not in data:
+            data["gemini_request_timeout_ms"] = 10000
+        # Ensure fallback provider key fields exist
+        if "groq_api_key" not in data:
+            data["groq_api_key"] = ""
+        if "github_api_key" not in data:
+            data["github_api_key"] = ""
+        version = 2
+    data["_config_version"] = CONFIG_VERSION
+    return data
+
+
 def load_api_keys() -> dict:
     if CONFIG_FILE.exists():
         try:
-            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                data = _migrate_config(data)
+                # Save migrated config
+                try:
+                    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+                except Exception:
+                    pass
+                return data
         except Exception as e:
             print(f"❌ Failed to load api_keys.json: {e}")
             return {}
@@ -77,7 +114,10 @@ def load_api_keys() -> dict:
         _legacy = BASE_DIR / "config" / "api_keys.json"
         if _legacy.exists():
             try:
-                return json.loads(_legacy.read_text(encoding="utf-8"))
+                data = json.loads(_legacy.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    data = _migrate_config(data)
+                return data
             except Exception:
                 return {}
     except Exception:
@@ -87,6 +127,26 @@ def load_api_keys() -> dict:
 
 def get_gemini_key() -> str | None:
     return load_api_keys().get("gemini_api_key")
+
+
+def get_gemini_key_2() -> str | None:
+    return load_api_keys().get("gemini_api_key_2")
+
+
+def save_gemini_keys(key_1: str, key_2: str = "", os_system: str = "") -> None:
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["gemini_api_key"] = key_1.strip()
+    if key_2.strip():
+        data["gemini_api_key_2"] = key_2.strip()
+    if os_system.strip():
+        data["os_system"] = os_system.strip()
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def is_configured() -> bool:

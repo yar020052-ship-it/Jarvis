@@ -9,7 +9,7 @@ through JARVIS function calling.
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 import json
 import os
 import re
@@ -145,6 +145,8 @@ class MCPRegistry:
         self._runtime_errors: list[dict[str, str]] = []
         self._runtime_errors_lock = threading.Lock()
         self._ready = threading.Event()
+        self._config_cache = None
+        self._config_cache_mtime = None
         self._load_config()
         # Discovery spawns server processes + network (HTTP) — seconds.
         # Run it in background so startup/connect isn't blocked; readers below
@@ -161,16 +163,12 @@ class MCPRegistry:
             self._ready.set()
 
     def _wait_ready(self, timeout: float = 60.0) -> None:
-        try:
+        with suppress(Exception):
             self._ready.wait(timeout=timeout)
-        except Exception:
-            pass
 
     def _log(self, message: str) -> None:
-        try:
+        with suppress(Exception):
             self.logger(message)
-        except Exception:
-            pass
 
     def _load_config(self) -> None:
         try:
@@ -483,12 +481,25 @@ class MCPRegistry:
             for name, item in self._tools.items()
         ]
 
-    def list_configured_servers(self) -> list[dict]:
+    def _read_config(self):
+        """Read mcp config with a cheap mtime-based cache."""
+        try:
+            mtime = self.config_path.stat().st_mtime
+        except OSError:
+            mtime = None
+        if self._config_cache is not None and mtime == self._config_cache_mtime:
+            return self._config_cache
         try:
             data = json.loads(self.config_path.read_text(encoding="utf-8"))
-            rows = data.get("servers", []) if isinstance(data, dict) else []
         except (OSError, ValueError):
-            return []
+            data = {}
+        self._config_cache = data
+        self._config_cache_mtime = mtime
+        return data
+
+    def list_configured_servers(self) -> list[dict]:
+        data = self._read_config()
+        rows = data.get("servers", []) if isinstance(data, dict) else []
         out = []
         for item in rows if isinstance(rows, list) else []:
             if not isinstance(item, dict):
@@ -634,10 +645,8 @@ class MCPRegistry:
             and structured_result.strip() == text_blob
         )
         if not duplicate_structured and structured is not None and text_blob:
-            try:
+            with suppress(TypeError, ValueError):
                 duplicate_structured = json.loads(text_blob) == structured
-            except (TypeError, ValueError):
-                pass
         if not duplicate_structured and structured is not None:
             chunks.append(json.dumps(structured, ensure_ascii=False, default=str))
         chunks.extend(text_chunks)
@@ -762,10 +771,8 @@ class MCPRegistry:
 
         output_limit = _MAX_TOOL_OUTPUT
         if _output_limit is not None:
-            try:
+            with suppress(TypeError, ValueError):
                 output_limit = min(512_000, max(_MAX_TOOL_OUTPUT, int(_output_limit)))
-            except (TypeError, ValueError):
-                pass
 
         def _perform() -> str | MCPToolResult:
             result = asyncio.run(

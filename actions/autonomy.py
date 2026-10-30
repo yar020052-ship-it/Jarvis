@@ -73,6 +73,17 @@ def autonomy(parameters=None, **_ctx) -> str:
         fixes = sum(1 for e in today if e.get("kind") == "fix")
         feats = sum(1 for e in today if e.get("kind") == "feature")
         parts.append(f"Сегодня: починок {fixes}, новинок с GitHub {feats}.")
+        try:
+            from memory import lessons as lessons_mod
+
+            summary = lessons_mod.stats()
+            parts.append(
+                f"Уроков на ошибках: {summary['total']}, "
+                f"открытых сбоев: {summary['open']}, "
+                f"правил владельца: {summary['owner']}."
+            )
+        except Exception:
+            pass
         cfg = cycle_mod.settings()
         parts.append(
             "Фоновое развитие "

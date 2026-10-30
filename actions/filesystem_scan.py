@@ -44,6 +44,7 @@ def _connect() -> sqlite3.Connection:
             scanned INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS directories_pending_idx ON directories(scanned);
+        CREATE INDEX IF NOT EXISTS directories_pending_path_idx ON directories(scanned, path);
         CREATE TABLE IF NOT EXISTS metadata (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
@@ -64,6 +65,33 @@ def _set(db: sqlite3.Connection, key: str, value: object) -> None:
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (key, str(value)),
     )
+
+
+def _scan_activity(db: sqlite3.Connection) -> str:
+    """Describe persisted scan state without claiming a paused scan is active."""
+    if _get(db, "in_progress") != "1":
+        return "завершено" if _get(db, "finished") else "ещё не запускалось"
+
+    # Older indexes have no heartbeat. Their start time is the best available
+    # indication that the scan has stopped receiving batches.
+    try:
+        last_progress = float(_get(db, "last_progress", "0") or 0)
+    except (TypeError, ValueError):
+        last_progress = 0
+    if not last_progress:
+        try:
+            last_progress = time.mktime(
+                time.strptime(_get(db, "started"), "%Y-%m-%d %H:%M:%S")
+            )
+        except (TypeError, ValueError, OverflowError):
+            last_progress = 0
+
+    if last_progress:
+        idle_seconds = max(0, time.time() - last_progress)
+        if idle_seconds > 30 * 60:
+            idle_minutes = max(1, int(idle_seconds // 60))
+            return f"приостановлено {idle_minutes} мин назад; вызовите scan для продолжения"
+    return "продолжается"
 
 
 def _volumes() -> list[tuple[str, str]]:
@@ -118,6 +146,7 @@ def _start_scan(db: sqlite3.Connection) -> str:
     _set(db, "in_progress", "1")
     _set(db, "started", started)
     _set(db, "finished", "")
+    _set(db, "last_progress", time.time())
     _set(db, "errors", 0)
     _set(db, "skipped_reparse", 0)
     db.commit()
@@ -184,6 +213,7 @@ def _scan_batch(db: sqlite3.Connection) -> str:
 
     _set(db, "errors", errors)
     _set(db, "skipped_reparse", skipped_reparse)
+    _set(db, "last_progress", time.time())
     db.commit()
     pending = db.execute("SELECT COUNT(*) FROM directories WHERE scanned=0").fetchone()[0]
     done = db.execute("SELECT COUNT(*) FROM directories WHERE scanned=1").fetchone()[0]
@@ -194,7 +224,11 @@ def _scan_batch(db: sqlite3.Connection) -> str:
     file_count, total_bytes = db.execute(
         "SELECT COUNT(*),COALESCE(SUM(size),0) FROM files"
     ).fetchone()
-    state = "идёт; вызовите scan ещё раз для продолжения" if pending else "завершено"
+    state = (
+        "идёт; вызовите scan ещё раз для продолжения"
+        if pending and _scan_activity(db) == "продолжается"
+        else _scan_activity(db)
+    )
     return (
         f"Индексирование {state}. Обработано каталогов: {done}; в очереди: {pending}; "
         f"файлов: {file_count}; суммарный размер: {total_bytes / 1024**3:.2f} ГБ; "
@@ -213,9 +247,7 @@ def _status(db: sqlite3.Connection) -> str:
     pending = db.execute(
         "SELECT COUNT(*) FROM directories WHERE scanned=0"
     ).fetchone()[0]
-    state = "продолжается" if _get(db, "in_progress") == "1" else (
-        "завершено" if _get(db, "finished") else "ещё не запускалось"
-    )
+    state = _scan_activity(db)
     return (
         f"Состояние индекса: {state}; файлов: {row[0]}; каталогов обработано: {scanned}; "
         f"ожидают: {pending}; объём по метаданным: {row[1] / 1024**3:.2f} ГБ; "
@@ -250,7 +282,11 @@ def _search(db: sqlite3.Connection, query: str, extension: str, limit: int) -> s
     lines = [f"Найдено в индексе: {total}; показаны первые {len(rows)}."]
     lines.extend(f"{path} ({size / 1024:.1f} КБ; {time.strftime('%Y-%m-%d %H:%M', time.localtime(mtime))})" for path, size, mtime in rows)
     if _get(db, "in_progress") == "1":
-        lines.append("Индекс ещё строится; повторите поиск после завершения сканирования.")
+        activity = _scan_activity(db)
+        if activity == "продолжается":
+            lines.append("Индекс ещё строится; повторите поиск после завершения сканирования.")
+        else:
+            lines.append(f"{activity.capitalize()}; повторите filesystem_scan action=scan, чтобы продолжить.")
     elif _get(db, "finished"):
         lines.append(f"Индекс обновлён: {_get(db, 'finished')}.")
     return "\n".join(lines)

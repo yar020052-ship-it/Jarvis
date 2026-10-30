@@ -53,6 +53,60 @@ def test_scout_builds_filters_and_reports(monkeypatch):
     assert "line one line two" in result
 
 
+def test_scout_uses_github_token_from_environment(monkeypatch):
+    captured = {}
+
+    def fake_get(_url, **kwargs):
+        captured.update(kwargs)
+        return _Response({"items": []})
+
+    # The machine running the tests may have a real token saved by JARVIS;
+    # environment handling must be verified without it leaking into the run.
+    monkeypatch.setattr("core.paths.load_config", lambda _name: {})
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setattr(github_scout.requests, "get", fake_get)
+
+    github_scout.github_scout({"query": "desktop assistant"})
+
+    assert captured["headers"]["Authorization"] == "Bearer test-token"
+
+
+def test_scout_prefers_token_saved_in_jarvis_settings(monkeypatch):
+    captured = {}
+
+    def fake_get(_url, **kwargs):
+        captured.update(kwargs)
+        return _Response({"items": []})
+
+    monkeypatch.setenv("GITHUB_TOKEN", "environment-token")
+    monkeypatch.setattr(
+        "core.paths.load_config", lambda _name: {"github_token": "jarvis-token"}
+    )
+    monkeypatch.setattr(github_scout.requests, "get", fake_get)
+
+    github_scout.github_scout({"query": "desktop assistant"})
+
+    assert captured["headers"]["Authorization"] == "Bearer jarvis-token"
+
+
+def test_scout_omits_authorization_without_github_token(monkeypatch):
+    captured = {}
+
+    def fake_get(_url, **kwargs):
+        captured.update(kwargs)
+        return _Response({"items": []})
+
+    # Ignore a real token saved in the local JARVIS config: this test covers
+    # the anonymous-request path only.
+    monkeypatch.setattr("core.paths.load_config", lambda _name: {})
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(github_scout.requests, "get", fake_get)
+
+    github_scout.github_scout({"query": "desktop assistant"})
+
+    assert "Authorization" not in captured["headers"]
+
+
 def test_scout_survives_invalid_min_stars(monkeypatch):
     monkeypatch.setattr(
         github_scout.requests, "get", lambda *a, **k: _Response({"items": []})

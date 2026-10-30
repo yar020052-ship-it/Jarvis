@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import getpass
 import json
-import os
+import sys
 from pathlib import Path
 
 from telethon import TelegramClient
@@ -15,12 +15,16 @@ from telethon.errors import (
     SessionPasswordNeededError,
 )
 
+# Keep the setup script on the same user-data path as the running connector.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from core.paths import get_user_data_dir
+
 
 def data_dir() -> Path:
-    root = os.environ.get("LOCALAPPDATA")
-    if not root:
-        raise RuntimeError("LOCALAPPDATA is not set; this connector currently targets Windows.")
-    path = Path(root) / "JARVIS" / "mcp" / "telegram-personal"
+    path = get_user_data_dir() / "mcp" / "telegram-personal"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

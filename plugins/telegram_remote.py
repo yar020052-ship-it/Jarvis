@@ -147,6 +147,7 @@ import queue
 import threading
 import time
 import unicodedata
+import contextlib
 
 # One file, dropped into whatever Mark the person is running. The per-plugin
 # settings store is load-bearing here — the bot token and the allowlist live in
@@ -236,7 +237,7 @@ _CORE_OPS = (
         "cmd": None,
         "icon": "▶",
         "button": False,
-        "desc": "begin listening for commands from the paired phone",
+        "desc": "начать прослушивание команд от привязанного телефона",
         "where": "desk",
         "gate": None,
         "arg": None,
@@ -246,7 +247,7 @@ _CORE_OPS = (
         "cmd": "stop",
         "icon": "⏹",
         "button": False,
-        "desc": "stop listening, so nothing outside can reach this computer",
+        "desc": "остановить прослушивание, чтобы никто снаружи не мог 닿ть до этого компьютера",
         "where": "both",
         "gate": None,
         "arg": None,
@@ -256,7 +257,7 @@ _CORE_OPS = (
         "cmd": "status",
         "icon": "ℹ",
         "button": True,
-        "desc": "report whether the bridge is listening and how many phones are approved",
+        "desc": "сообщить, слушает ли мост и сколько телефонов одобрено",
         "where": "both",
         "gate": None,
         "arg": None,
@@ -266,7 +267,7 @@ _CORE_OPS = (
         "cmd": None,
         "icon": "🔑",
         "button": False,
-        "desc": "open the pairing window for ten minutes so one more phone can be approved",
+        "desc": "открыть окно сопряжения на десять минут, чтобы ещё один телефон мог быть одобрен",
         "where": "desk",
         "gate": None,
         "arg": None,
@@ -276,7 +277,7 @@ _CORE_OPS = (
         "cmd": None,
         "icon": "🚫",
         "button": False,
-        "desc": "erase every approved phone, for one that has been lost",
+        "desc": "стереть все одобренные телефоны, если один потерян",
         "where": "desk",
         "gate": None,
         "arg": None,
@@ -286,7 +287,7 @@ _CORE_OPS = (
         "cmd": "panic",
         "icon": "🚨",
         "button": False,
-        "desc": "stop the bridge AND erase every approved phone in one step",
+        "desc": "остановить мост И стёрть все одобренные телефоны за один шаг",
         "where": "both",
         "gate": None,
         "arg": None,
@@ -296,7 +297,7 @@ _CORE_OPS = (
         "cmd": "help",
         "icon": "❓",
         "button": True,
-        "desc": "list what this bot can do",
+        "desc": "показать, что этот бот умеет",
         "where": "remote",
         "gate": None,
         "arg": None,
@@ -306,7 +307,7 @@ _CORE_OPS = (
         "cmd": "id",
         "icon": "🆔",
         "button": False,
-        "desc": "show this chat's numeric ID",
+        "desc": "показать цифровой ID этого чата",
         "where": "remote",
         "gate": None,
         "arg": None,
@@ -423,6 +424,7 @@ _state: dict = {
     "turn_end": 0.0,  # hard ceiling for this turn
     "turn_quiet": 0.0,  # closes early once the answer has gone quiet
     "bot": "",
+    "bot_username": "",
     "started": 0.0,
     "floor_ts": 0.0,  # Telegram-clock moment the bridge began listening
     "pair_until": 0.0,  # monotonic; pairing is armed until then
@@ -697,97 +699,77 @@ def _test_connection(values: dict) -> tuple[bool, str]:
 
 PLUGIN_SETTINGS = {
     "namespace": _NS,
-    "title": "✈️  TELEGRAM REMOTE",
+    "title": "✈️  ТЕЛЕГРАМ УДАЛЁННЫЙ ДОСТУП",
     "fields": [
         {
             "key": "bot_token",
-            "label": "Bot Token",
+            "label": "Токен бота",
             "type": "password",
-            "placeholder": "Telegram → @BotFather → /newbot → the token it gives you",
+            "placeholder": "Telegram → @BotFather → /newbot → токен, который он даст",
         },
         {
             "key": "pairing_code",
-            "label": "Pairing Code (one-time)",
+            "label": "Код сопряжения (одноразовый)",
             "type": "password",
-            "placeholder": "Any secret phrase. Send it to the bot once to approve your phone.",
+            "placeholder": "Любая секретная фраза. Отправьте её боту один раз, чтобы одобрить телефон.",
         },
         {
             "key": "allowed_chat_ids",
-            "label": "Approved Chat IDs",
+            "label": "Одобренные ID чатов",
             "type": "text",
-            "placeholder": "Filled in by pairing. Comma-separated. Empty = nothing is accepted.",
+            "placeholder": "Заполняется при сопряжении. Через запятую. Пусто = ничего не принимается.",
         },
         {
             "key": "relay_replies",
-            "label": "Send JARVIS's answers back to Telegram",
+            "label": "Отправлять ответы JARVIS обратно в Telegram",
             "type": "toggle",
             "default": True,
         },
-        # Off by default, and deliberately so. Updating a plugin must never hand
-        # a remote channel a view of your screen because you were not asked.
-        # Once this is on there is no cooldown and no second question — that is
-        # the whole point of it — so the decision belongs here, at the machine,
-        # once.
         {
             "key": "allow_screenshot",
-            "label": "Allow /screen — send screenshots to approved phones",
+            "label": "Разрешить /screen — отправлять скриншоты одобренным телефонам",
             "type": "toggle",
             "default": False,
         },
-        # main.py's own monitor speaks its alerts out loud, and only while
-        # JARVIS is awake — so a machine in trouble while the house is empty
-        # says nothing at all. This is the half that was missing, and it is
-        # off by default because an unasked-for push notification is somebody
-        # else's phone buzzing at three in the morning.
-        # A camera is a stronger thing to hand out than a screen, so it gets its
-        # own switch rather than riding on that one.
         {
             "key": "allow_camera",
-            "label": "Allow /cam — send webcam pictures to approved phones",
+            "label": "Разрешить /cam — отправлять фото с веб-камеры одобренным телефонам",
             "type": "toggle",
             "default": False,
         },
-        # These two are folders, not switches, and empty means the feature does
-        # not exist. Naming a folder is the whole permission: it is the only
-        # place files may be written to, and the only place they may be read
-        # from. Nothing arriving from Telegram can change either one.
         {
             "key": "inbox_folder",
-            "label": "Folder for files sent from the phone",
+            "label": "Папка для файлов, отправленных с телефона",
             "type": "text",
-            "placeholder": "Empty = files from the phone are ignored",
+            "placeholder": "Пусто = файлы с телефона игнорируются",
         },
         {
             "key": "share_folder",
-            "label": "Folder /get may send files out of",
+            "label": "Папка, из которой /get может отправлять файлы",
             "type": "text",
-            "placeholder": "Empty = /get does not exist",
+            "placeholder": "Пусто = /get не существует",
         },
-        # Off by default, and it has to be: a plugin that is merely PRESENT must
-        # never open a way in. On, it is the owner of the machine saying they
-        # would rather not repeat themselves every morning — which is a
-        # different thing entirely, and theirs to decide.
         {
             "key": "start_on_launch",
-            "label": "Start listening when JARVIS launches (no need to ask each time)",
+            "label": "Начать прослушивание при запуске JARVIS (не нужно спрашивать каждый раз)",
             "type": "toggle",
             "default": False,
         },
         {
             "key": "voice_replies",
-            "label": "Speak answers to typed commands too (spoken ones always are)",
+            "label": "Озвучивать ответы на текстовые команды тоже (речевые всегда озвучиваются)",
             "type": "toggle",
             "default": False,
         },
         {
             "key": "away_alerts",
-            "label": "Alert my phone when this computer is in trouble and nobody is here",
+            "label": "Оповещать мой телефон, когда этот компьютер в беде и никого нет рядом",
             "type": "toggle",
             "default": False,
         },
     ],
     "action": {
-        "label": "TEST CONNECTION",
+        "label": "ПРОВЕРИТЬ ПОДКЛЮЧЕНИЕ",
         "run": lambda values: _test_connection(values or {}),
     },
 }
@@ -840,13 +822,11 @@ def _put(job: dict) -> None:
     q = _state.get("outbox")
     if q is None:
         return
-    try:
+    with contextlib.suppress(Exception):
         q.put_nowait(job)
-    except Exception:
-        pass
 
 
-def _enqueue(chat_id: int, text: str) -> None:
+def _enqueue(chat_id: int, text: str, markup: dict | None = None) -> None:
     """Queue a text reply, split rather than truncated.
 
     Telegram rejects anything over 4096 characters. The first version cut at
@@ -863,7 +843,7 @@ def _enqueue(chat_id: int, text: str) -> None:
             cut = max(chunk.rfind("\n"), chunk.rfind(" "))
             if cut > _TG_CHUNK // 2:
                 chunk, text = chunk[:cut], chunk[cut:] + text
-        _put({"kind": "text", "chat": chat_id, "text": chunk})
+        _put({"kind": "text", "chat": chat_id, "text": chunk, "markup": markup})
 
 
 def _enqueue_job(chat_id: int, job: dict) -> None:
@@ -896,6 +876,20 @@ def _keyboard(cfg: dict) -> dict:
     labels = [f"{o['icon']} /{o['cmd']}" for o in _remote_ops(cfg) if o.get("button")]
     rows = [labels[i : i + 2] for i in range(0, len(labels), 2)]
     return {"keyboard": rows, "resize_keyboard": True, "is_persistent": True}
+
+
+def _inline_keyboard(cfg: dict) -> dict:
+    """Inline keyboard with quick actions — callback_query not required here:
+    each button just sends its command text like a normal tap."""
+    quick = [
+        ("ℹ Статус", "/status"),
+        ("📸 Скриншот", "/screen"),
+        ("💻 Экран", "Сделай скриншот экрана и расскажи, что видишь."),
+        ("📊 Система", "Расскажи состояние ПК: загрузка, память, диск."),
+        ("⏹ Стоп", "/stop"),
+    ]
+    rows = [[{"text": t, "callback_data": c}] for t, c in quick]
+    return {"inline_keyboard": rows}
 
 
 def _menu(cfg: dict) -> list[dict]:
@@ -1023,16 +1017,16 @@ def _send_job(sess, token: str, job: dict, stop: threading.Event) -> None:
                 # and Markdown parsing would reject or mangle them.
                 if job.get("markup"):
                     payload["reply_markup"] = job["markup"]
+                if job.get("inline_markup"):
+                    payload["reply_markup"] = job["inline_markup"]
                 r = _api(sess, token, "sendMessage", json=payload)
 
             if r is not None and r.status_code == 429:
                 wait = 3.0
-                try:
+                with contextlib.suppress(Exception):
                     wait = float(
                         (r.json().get("parameters") or {}).get("retry_after", 3)
                     )
-                except Exception:
-                    pass
                 if stop.wait(min(max(wait, 1.0), 30.0)):
                     return
                 continue
@@ -1084,10 +1078,8 @@ def _name_prefix() -> str:
     the path of every log line."""
     now = time.monotonic()
     if now - _name_cache[1] > 60:
-        try:
+        with contextlib.suppress(Exception):
             _name_cache[0] = f"{get_assistant_name()}:"
-        except Exception:
-            pass
         _name_cache[1] = now
     return _name_cache[0] or "JARVIS:"
 
@@ -1144,6 +1136,8 @@ def _maybe_relay(line: str) -> None:
             _enqueue(chat_id, answer)
             _maybe_speak(chat_id, answer)
         elif line.startswith("SYS:"):
+            if "Окраска голоса" in line:
+                return
             # Inside the turn, a system line is part of the answer. Note that
             # core/confirm.py's own lines are NOT among them — see the watcher
             # for why, and for what carries the confirmation instead.
@@ -1213,10 +1207,8 @@ def _install_relay(player) -> None:
         try:
             orig(text)
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 _maybe_relay(str(text))
-            except Exception:
-                pass
 
     wrapped._telegram_relay = True  # type: ignore[attr-defined]
     wrapped._telegram_orig = orig  # type: ignore[attr-defined]
@@ -1240,10 +1232,8 @@ def _remove_relay(player) -> None:
             return
         del player.write_log  # unshadow the class method
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             player.write_log = orig
-        except Exception:
-            pass
 
 
 # ── inbound ──────────────────────────────────────────────────────────────────
@@ -1262,7 +1252,7 @@ def _drop_backlog(sess, token: str):
     Note that this returning None no longer means "everything is eligible": the
     start floor in _handle stands whether this call worked or not.
     """
-    try:
+    with contextlib.suppress(Exception):
         _api(
             sess,
             token,
@@ -1270,8 +1260,6 @@ def _drop_backlog(sess, token: str):
             json={"drop_pending_updates": True},
             timeout=15,
         )
-    except Exception:
-        pass
     try:
         r = _api(
             sess, token, "getUpdates", params={"offset": -1, "timeout": 0}, timeout=15
@@ -1287,7 +1275,10 @@ def _drop_backlog(sess, token: str):
 
 def _deliver(player, text: str) -> bool:
     """Hand a command to the Live session exactly as the desk text box does."""
-    fn = getattr(player, "on_text_command", None)
+    # The command handler and wake helpers live on the UI shim (player.ui), not
+    # on JarvisLive itself — self.ui.on_text_command = self._on_text_command etc.
+    ui = getattr(player, "ui", player)
+    fn = getattr(ui, "on_text_command", None)
     if not callable(fn):
         return False
     # A remote command is deliberate control and there is no WAKE button within
@@ -1295,8 +1286,8 @@ def _deliver(player, text: str) -> bool:
     # dashboard command. State is checked before toggling, because on_wake_manual
     # is a toggle and would otherwise put an awake JARVIS to sleep.
     try:
-        get_state = getattr(player, "wake_get_state", None)
-        wake_now = getattr(player, "on_wake_manual", None)
+        get_state = getattr(ui, "wake_get_state", None)
+        wake_now = getattr(ui, "on_wake_manual", None)
         if callable(get_state) and callable(wake_now):
             st = get_state() or {}
             if st.get("enabled") and not st.get("awake"):
@@ -1455,7 +1446,7 @@ def _run_voice(player, chat_id: int, voice: dict, token: str, who: str) -> None:
     except Exception as e:
         _state["turn_open"] = False
         _enqueue(
-            chat_id, f"I could not make out that voice note: " f"{_scrub(e, token)}"
+            chat_id, f"Не удалось распознать голосовое: " f"{_scrub(e, token)}"
         )
         _log(
             player,
@@ -1467,14 +1458,191 @@ def _run_voice(player, chat_id: int, voice: dict, token: str, who: str) -> None:
     heard = (heard or "").strip()
     if not heard:
         _state["turn_open"] = False
-        _enqueue(chat_id, "I could not hear anything in that.")
+        _enqueue(chat_id, "Ничего не разобралось в этом голосовом.")
         return
     if len(heard) > _MAX_TEXT:
         heard = heard[:_MAX_TEXT]
 
     _state["heard"] = _state.get("heard", 0) + 1
-    _enqueue(chat_id, f"🎤 {heard}")
+    _enqueue(chat_id, f"рџЋ¤ {heard}")
     _deliver_text(player, chat_id, who, heard, spoken=True)
+
+
+def _extract_video_frame(data: bytes, mime: str) -> tuple[bytes, str] | None:
+    """Pull one representative frame out of a video and JPEG it.
+
+    cv2 is already in the environment; ffmpeg is not guaranteed on PATH, so prefer
+    OpenCV and fall back to ffmpeg only when the Python binding is missing. The
+    frame is grabbed a third of the way in (past any title card) and re-encoded
+    to JPEG, which is what the vision session accepts. Returns (jpeg_bytes,
+    "image/jpeg") or None when the video could not be decoded at all.
+    """
+    import io  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
+    ext = (
+        ".mp4" if mime.startswith("video") else "." + (mime.rsplit("/", 1)[-1] or "mp4")
+    )
+    fd, tmp_path = tempfile.mkstemp(suffix=ext)
+    try:
+        with open(fd, "wb") as f:
+            f.write(data)
+
+        try:
+            import cv2  # noqa: PLC0415
+
+            cap = cv2.VideoCapture(tmp_path)
+            if not cap.isOpened():
+                cap = None
+            if cap is not None:
+                total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                idx = max(0, total // 3) if total else 0
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ok, frame = cap.read()
+                cap.release()
+                if ok and frame is not None:
+                    ok, buf = cv2.imencode(".jpg", frame)
+                    if ok:
+                        return bytes(buf), "image/jpeg"
+        except ImportError:
+            pass
+
+        out = io.BytesIO()
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            tmp_path,
+            "-vf",
+            "select='eq(n\\,0)+eq(n\\,10)+eq(n\\,30)'",
+            "-frames:v",
+            "1",
+            "-f",
+            "image2",
+            "-vcodec",
+            "mjpeg",
+            "pipe:1",
+        ]
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=20, check=False)
+            if r.returncode == 0 and r.stdout:
+                out.write(r.stdout)
+                return out.getvalue(), "image/jpeg"
+        except FileNotFoundError:
+            pass
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            "00:00:01",
+            "-i",
+            tmp_path,
+            "-frames:v",
+            "1",
+            "-f",
+            "image2",
+            "-vcodec",
+            "mjpeg",
+            "pipe:1",
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=20, check=False)
+        if r.returncode == 0 and r.stdout:
+            return r.stdout, "image/jpeg"
+    finally:
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            os.unlink(tmp_path)
+    return None
+
+
+def _run_video(player, chat_id: int, video: dict, token: str, who: str) -> None:
+    """A video message becomes a command by transcribing its audio first.
+
+    The video file is downloaded and its audio track transcribed word for
+    word, exactly like a voice note, so JARVIS can "watch" what was said and
+    act on it. A representative frame is also grabbed and sent to the vision
+    session alongside the transcript, so JARVIS can "see" what was shown.
+    The transcript (and frame) are echoed back before anything executes.
+    """
+    try:
+        data, _ext = _download(token, video.get("file_id") or "")
+        mime = video.get("mime_type") or "video/mp4"
+        heard = _ops.transcribe(data, mime)
+    except Exception as e:
+        _state["turn_open"] = False
+        _enqueue(chat_id, f"Не удалось распознать видео: " f"{_scrub(e, token)}")
+        _log(
+            player,
+            f"SYS: Telegram remote could not transcribe a video message "
+            f"— {_scrub(e, token)}",
+        )
+        return
+
+    heard = (heard or "").strip()
+
+    frame = None
+    frame_err = None
+    try:
+        frame = _extract_video_frame(data, mime)
+    except Exception as e:
+        frame_err = str(e)
+        _log(player, f"SYS: Telegram remote could not grab a frame: {e}")
+
+    if not heard and not frame:
+        _state["turn_open"] = False
+        if frame_err:
+            _enqueue(
+                chat_id, f"Не удалось распознать видео: {_scrub(frame_err, token)}"
+            )
+        else:
+            _enqueue(chat_id, "Ничего не разобралось в аудиодорожке этого видео.")
+        return
+
+    if heard:
+        if len(heard) > _MAX_TEXT:
+            heard = heard[:_MAX_TEXT]
+        _state["heard"] = _state.get("heard", 0) + 1
+        _enqueue(chat_id, f"🎤 {heard}")
+    else:
+        heard = "(аудио не распознано)"
+
+    if frame is not None:
+        # Send the frame + transcript to vision on the main loop as a single turn,
+        # exactly like _send_remote_photo does for still photos from the phone.
+        prompt = (
+            "Пользователь прислал видеосообщение. Аудиодорожка расшифрована ниже. "
+            "Также прилагается кадр из видео. Внимательно посмотри на кадр, "
+            "соедини с аудио и ответь по-русски: что происходит на видео, "
+            "что происходит на кадре. Опирайся только на то, что реально видно и слышно."
+        )
+        full_text = f"[IMAGE SOURCE: PHONE VIDEO CAMERA]\n\n{prompt}\n\nАУДИО:\n{heard}"
+        fn = getattr(player, "_send_remote_vision", None)
+        if callable(fn):
+            import asyncio  # noqa: PLC0415
+
+            loop = getattr(player, "_loop", None)
+            if loop is not None and fn and asyncio.iscoroutinefunction(fn):
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        fn(frame[0], frame[1], full_text, "PHONE VIDEO CAMERA"),
+                        loop,
+                    )
+                except Exception as e:
+                    print(f"[TelegramRemote] vision frame failed: {e}")
+            else:
+                # Fallback: deliver text only, frame is logged but not seen
+                _deliver_text(player, chat_id, who, full_text, spoken=True)
+        else:
+            _deliver_text(player, chat_id, who, full_text, spoken=True)
+    else:
+        # No frame — deliver the transcript only
+        if frame_err:
+            _enqueue(chat_id, "Кадр из видео не удалось извлечь, доставляю только аудио.")
+        _deliver_text(player, chat_id, who, heard, spoken=True)
 
 
 def _run_file_in(
@@ -1495,7 +1663,7 @@ def _run_file_in(
         data, _ext = _download(token, item.get("file_id") or "")
         path = _ops.save_incoming(name, data, _cfg())
     except Exception as e:
-        _enqueue(chat_id, f"I could not save that: {_scrub(e, token)}")
+        _enqueue(chat_id, f"Не удалось сохранить: {_scrub(e, token)}")
         _log(player, f"SYS: Telegram remote could not save a file — {_scrub(e, token)}")
         return
 
@@ -1673,18 +1841,39 @@ def _handle(player, msg: dict, token: str) -> None:
     frm = msg.get("from") or {}
     chat_id = chat.get("id")
 
-    # -- shape: private human chats only -------------------------------------
-    if (
-        chat.get("type") != "private"
-        or frm.get("is_bot")
-        or not isinstance(chat_id, int)
-    ):
+    # -- shape: private human chats and group chats where bot is mentioned -----
+    chat_type = chat.get("type", "")
+    is_group = chat_type in ("group", "supergroup")
+    is_private = chat_type == "private"
+
+    if not is_private and not is_group:
         return
-    # In a private chat the sender and the chat are the same account. Anything
-    # else is a shape this bridge was not designed around, so it is refused
-    # rather than reasoned about.
-    if frm.get("id") is not None and frm.get("id") != chat_id:
+    if frm.get("is_bot"):
         return
+    if not isinstance(chat_id, int):
+        return
+
+    # In group chats, only respond to messages that mention the bot or reply to it
+    if is_group:
+        bot_username = None
+        with contextlib.suppress(Exception):
+            bot_username = _state.get("bot_username")
+        text = (msg.get("text") or "").strip()
+        # Check if bot is mentioned or message is a reply to bot
+        is_mentioned = False
+        if bot_username and f"@{bot_username}" in text:
+            is_mentioned = True
+            text = text.replace(f"@{bot_username}", "").strip()
+        reply_to = msg.get("reply_to_message")
+        if reply_to and reply_to.get("from", {}).get("is_bot"):
+            is_mentioned = True
+        if not is_mentioned and not text.startswith("/"):
+            return
+        msg["text"] = text
+    else:
+        # In a private chat the sender and the chat are the same account.
+        if frm.get("id") is not None and frm.get("id") != chat_id:
+            return
     # Three shapes get in: something typed, something said, and something sent.
     # The last two are only considered when the helper is present to turn them
     # into words or into a saved file; without it they are not commands, they
@@ -1693,8 +1882,13 @@ def _handle(player, msg: dict, token: str) -> None:
     voice = msg.get("voice")
     doc = msg.get("document")
     photo = msg.get("photo")
+    video = msg.get("video") or msg.get("video_note")
     text = text.strip() if isinstance(text, str) else ""
-    spoken = (not text) and isinstance(voice, dict) and _ops is not None
+    spoken = (
+        (not text)
+        and (isinstance(voice, dict) or isinstance(video, dict))
+        and _ops is not None
+    )
     filed = (
         (not text)
         and (not spoken)
@@ -1775,7 +1969,7 @@ def _handle(player, msg: dict, token: str) -> None:
             )
             return
         if (item.get("file_size") or 0) > _FILE_BYTES:
-            _enqueue(chat_id, f"That file is over " f"{_FILE_BYTES // 1_000_000} MB.")
+            _enqueue(chat_id, f"Этот файл больше {_FILE_BYTES // 1_000_000} МБ.")
             return
         name = item.get("file_name") or f"photo-{int(time.time())}.jpg"
         cap = str(msg.get("caption") or "").strip()[:_MAX_TEXT]
@@ -1791,10 +1985,13 @@ def _handle(player, msg: dict, token: str) -> None:
             )
             return
         if (voice.get("file_size") or 0) > _VOICE_BYTES:
-            _enqueue(chat_id, "That voice note is too big to fetch.")
+            _enqueue(chat_id, "Это голосовое слишком большое, чтобы доставить.")
             return
         _open_turn(chat_id, spoken=True)
-        _spawn(_run_voice, player, chat_id, voice, token, who)
+        if isinstance(video, dict):
+            _spawn(_run_video, player, chat_id, video, token, who)
+        else:
+            _spawn(_run_voice, player, chat_id, voice, token, who)
         return
 
     cmd, arg = _split_command(text)
@@ -1827,7 +2024,7 @@ def _handle(player, msg: dict, token: str) -> None:
                 (
                     _gate_notice(hidden)
                     if hidden
-                    else f"There is no /{cmd}. Send /help for the list."
+                    else f"Такой команды нет: /{cmd}. Пришлите /help для списка."
                 ),
             )
             return
@@ -1838,19 +2035,20 @@ def _handle(player, msg: dict, token: str) -> None:
                     "kind": "text",
                     "chat": chat_id,
                     "markup": _keyboard(cfg),
+                    "inline_markup": _inline_keyboard(cfg),
                     "text": _help_text(cfg),
                 }
             )
             return
         if op["cmd"] == "id":
-            _enqueue(chat_id, f"This chat's ID is {chat_id}.")
+            _enqueue(chat_id, f"ID этого чата: {chat_id}.")
             return
         if op["cmd"] == "status":
             _enqueue(chat_id, _status_text())
             return
         if op["cmd"] == "stop":
             _enqueue(
-                chat_id, "Closing the remote bridge. Start it again from the computer."
+                chat_id, "Закрываю мост удалённого управления. Запустите снова с компьютера."
             )
             _stop_now()
             return
@@ -1885,7 +2083,11 @@ def _handle(player, msg: dict, token: str) -> None:
 
 
 def _deliver_text(
-    player, chat_id: int, who: str, text: str, spoken: bool = False
+    player,
+    chat_id: int,
+    who: str,
+    text: str,
+    spoken: bool = False,
 ) -> None:
     """The last few inches, shared by something typed and something said."""
     if spoken:
@@ -1896,7 +2098,7 @@ def _deliver_text(
         _log(player, f"[Telegram {who}]{' 🎤' if spoken else ''}: {text}")
     else:
         _state["turn_open"] = False
-        _enqueue(chat_id, "No live session right now — the command was not run.")
+        _enqueue(chat_id, "Живой сессии сейчас нет — команда не была выполнана.")
 
 
 def _try_pair(player, chat_id: int, text: str, cfg: dict, allowed: list[int]) -> None:
@@ -2070,10 +2272,8 @@ def _worker(player, stop: threading.Event, token: str) -> None:
                 # is not a safe sample (see _note_skew), so a short one is made
                 # on purpose when the last measurement gets old.
                 if time.monotonic() - _state.get("skew_at", 0.0) > _SKEW_REFRESH:
-                    try:
+                    with contextlib.suppress(Exception):
                         _note_skew(_api(sess, token, "getMe", timeout=15))
-                    except Exception:
-                        pass
             except Exception as e:
                 fails += 1
                 print(f"[TelegramRemote] poll error: {_scrub(e, token)}")
@@ -2195,12 +2395,12 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         try:
             save_plugin_config(_NS, {"allowed_chat_ids": ""})
         except Exception as e:
-            return f"Sir, I could not clear the approved chats: {e}"
+            return f"Сэр, не удалось очистить одобренные чаты: {e}"
         _state["pair_until"] = 0.0
         _log(player, "SYS: Telegram remote — every approved chat revoked.")
         return (
-            "Every approved chat has been revoked. No phone can command this "
-            "computer until you pair one again with a new pairing code."
+            "Все одобренные чаты отозваны. Ни один телефон не сможет управлять этим "
+            "компьютер, пока вы не сопряжете телефон снова новым кодом сопряжения."
         )
 
     # -------- STOP --------
@@ -2293,6 +2493,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
             "stop": stop,
             "outbox": queue.Queue(maxsize=200),
             "bot": bot_name,
+            "bot_username": bot_name.lstrip("@"),
             "started": time.monotonic(),
             "seen": 0,
             "shots": 0,
@@ -2446,10 +2647,8 @@ def _autostart() -> None:
             said = run({"action": "start"}, player=target)
             # Neutral wording, because this same line carries the refusals:
             # no token, no approved chat, already running.
-            try:
+            with contextlib.suppress(Exception):
                 _log(target, f"SYS: Telegram remote (auto-start) — {said}")
-            except Exception:
-                pass
             print(f"[TelegramRemote] auto-start: {said}")
             if "live on" in said or "already listening" in said:
                 return

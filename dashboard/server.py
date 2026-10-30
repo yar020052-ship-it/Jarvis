@@ -1042,6 +1042,56 @@ class DashboardServer:
                 self._interrupt_callback()
             return JSONResponse({"ok": True})
 
+        # ── Ollama: статус и ручная проверка подключения ────────────────
+        @app.get("/api/ollama/status")
+        async def ollama_status(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from core import gemini as _gemini
+
+                available = _gemini.ollama_available()
+                model = _gemini.ollama_model() if available else ""
+                base_url = _gemini.ollama_base_url()
+                return JSONResponse(
+                    {
+                        "ok": True,
+                        "available": available,
+                        "model": model,
+                        "base_url": base_url,
+                    }
+                )
+            except Exception as exc:
+                return JSONResponse(
+                    {"ok": False, "error": f"Ollama-модуль недоступен: {exc}"},
+                    status_code=500,
+                )
+
+        @app.post("/api/ollama/check")
+        async def ollama_check(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from core import gemini as _gemini
+
+                available = _gemini.ollama_available()
+                model = _gemini.ollama_model()
+                return JSONResponse(
+                    {
+                        "ok": True,
+                        "available": available,
+                        "model": model,
+                        "message": "Ollama отвечает"
+                        if available
+                        else "Ollama не отвечает (проверьте, что сервер запущен на 127.0.0.1:11434)",
+                    }
+                )
+            except Exception as exc:
+                return JSONResponse(
+                    {"ok": False, "error": f"Проверка не удалась: {exc}"},
+                    status_code=500,
+                )
+
         # ── Telegram: новые сообщения личного аккаунта ────────────────
         # Только чтение через уже настроенный Telethon-клиент владельца
         # (mcp_servers/telegram_personal). Состояние вотча не трогаем:
@@ -1072,6 +1122,9 @@ class DashboardServer:
             msgs = []
             for m in (data.get("messages") or [])[:15]:
                 text = str(m.get("text") or "").strip()
+                media_type = str(m.get("media_type") or "").strip()
+                if not text and media_type:
+                    text = "[%s]" % media_type
                 if not text:
                     continue
                 msgs.append({
@@ -1079,6 +1132,7 @@ class DashboardServer:
                     "from": str(m.get("sender", "?"))[:40],
                     "text": text[:300],
                     "date": str(m.get("date", ""))[:25],
+                    "media_type": media_type or None,
                 })
             return JSONResponse({"ok": True, "messages": msgs})
 

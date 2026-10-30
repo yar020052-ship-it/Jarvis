@@ -1,0 +1,17 @@
+{
+  "id": "2557078be5",
+  "state": "applied",
+  "created": "2026-10-26T13:54:42+03:00",
+  "changes": [
+    {
+      "path": "app/models_switch.ts",
+      "existed": false,
+      "before_b64": "",
+      "before_sha256": null,
+      "after_b64": "Ly8gTW9kZWwgc3dpdGNoaW5nIGxvZ2ljIGFkYXB0ZWQgZnJvbSBDb25jaApleHBvcnQgdHlwZSBNb2RlbFRpZXIgPSAxIHwgMiB8IDM7CgpleHBvcnQgaW50ZXJmYWNlIFN3aXRjaENhbmRpZGF0ZSB7CiAgZW5naW5lOiBzdHJpbmc7CiAgcHJvdmlkZXI6IHN0cmluZzsKICBtb2RlbDogc3RyaW5nOwogIGxhYmVsOiBzdHJpbmc7CiAgdGllcjogTW9kZWxUaWVyOwp9Cg==",
+      "after_sha256": "6877040574c2eb6e953c5f90132400d0d499b56139700f5d8fc1ea97802970bb"
+    }
+  ],
+  "diff": "--- /dev/null\n+++ app/models_switch.ts\n@@ -0,0 +1,10 @@\n+// Model switching logic adapted from Conch\n+export type ModelTier = 1 | 2 | 3;\n+\n+export interface SwitchCandidate {\n+  engine: string;\n+  provider: string;\n+  model: string;\n+  label: string;\n+  tier: ModelTier;\n+}",
+  "applied": "2026-10-26T13:55:47+03:00"
+}

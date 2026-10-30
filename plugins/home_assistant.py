@@ -118,9 +118,9 @@ PLUGIN_SETTINGS = {
     "namespace": _NS,
     "title": "🏠  HOME ASSISTANT",
     "fields": [
-        {"key": "url", "label": "Home Assistant URL", "type": "text",
+        {"key": "url", "label": "URL Home Assistant", "type": "text",
          "placeholder": "http://homeassistant.local:8123"},
-        {"key": "token", "label": "Long-Lived Access Token", "type": "password",
+        {"key": "token", "label": "Долгосрочный токен доступа", "type": "password",
          "placeholder": "Профиль Home Assistant → Security → Long-Lived Access Tokens"},
     ],
     "action": {"label": "ПРОВЕРИТЬ ПОДКЛЮЧЕНИЕ", "run": _test_connection},

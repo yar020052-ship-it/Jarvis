@@ -250,6 +250,7 @@ _CURSOR_SLACK = 0.15
 # depend only on (_VIS_WIN, sr) — rebuilding rfftfreq + 5 masks on every
 # 100 ms batch was pure overhead.
 from collections import OrderedDict
+import contextlib
 
 _VIS_BANDS_CACHE: "OrderedDict[int, tuple]" = OrderedDict()
 _VIS_BANDS_CACHE_LIMIT = 16
@@ -1621,7 +1622,7 @@ class JarvisLive:
         # A window-scoped chord is a real limitation, not a detail — say it once
         # in the log so nobody wonders why it does nothing while another app is
         # focused. Reporting it must never be able to undo the thing it reports.
-        try:
+        with contextlib.suppress(Exception):
             self.ui.write_log(
                 f"SYS: Рация включена — удерживайте {self._ptt.label}"
                 + (
@@ -1630,8 +1631,6 @@ class JarvisLive:
                     else " (работает, пока активно это окно)."
                 )
             )
-        except Exception:
-            pass
         return scope
 
     def _on_ptt(self, held: bool) -> None:
@@ -1645,14 +1644,10 @@ class JarvisLive:
                 self._last_user_speech = time.monotonic()
         elif self._offline_asr_enabled and self._offline_audio_queue is not None:
             if self._loop and self._loop.is_running():
-                try:
+                with contextlib.suppress(RuntimeError):
                     self._loop.call_soon_threadsafe(self._queue_offline_frame, b"")
-                except RuntimeError:
-                    pass
-        try:
+        with contextlib.suppress(Exception):
             self.ui.set_state("LISTENING" if held else "SLEEPING")
-        except Exception:
-            pass
 
     def interrupt(self) -> None:
         """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
@@ -1677,10 +1672,8 @@ class JarvisLive:
                     )
 
             if self._loop and self._loop.is_running():
-                try:
+                with contextlib.suppress(RuntimeError):  # loop уже закрыт
                     self._loop.call_soon_threadsafe(_drain)
-                except RuntimeError:
-                    pass  # loop уже закрыт
             else:
                 _drain()
         self.set_speaking(False)
@@ -1991,7 +1984,9 @@ class JarvisLive:
             try:
                 from actions.game_pilot import _state_path
 
-                saved_pilot = json.loads(_state_path().read_text(encoding="utf-8"))
+                state_file = _state_path()
+                raw = await asyncio.to_thread(state_file.read_text, encoding="utf-8")
+                saved_pilot = json.loads(raw)
                 active_authorized_campaign = bool(
                     saved_pilot.get("running") and saved_pilot.get("resume_authorized")
                     and saved_pilot.get("game") == "hoi4"
@@ -2014,7 +2009,9 @@ class JarvisLive:
                 try:
                     from actions.game_pilot import _match_game, _state_path
 
-                    saved_pilot = json.loads(_state_path().read_text(encoding="utf-8"))
+                    state_file = _state_path()
+                    raw = await asyncio.to_thread(state_file.read_text, encoding="utf-8")
+                    saved_pilot = json.loads(raw)
                     requested_game = _match_game(str(args.get("game", "")))
                     resume_saved_campaign = bool(
                         saved_pilot.get("resume_authorized")
@@ -2219,7 +2216,7 @@ class JarvisLive:
                 async def _do_shutdown():
                     await self._save_session_summary()
                     if self.session:
-                        try:
+                        with contextlib.suppress(Exception):
                             await self.session.send_client_content(
                                 turns={
                                     "role": "user",
@@ -2231,18 +2228,14 @@ class JarvisLive:
                                 },
                                 turn_complete=True,
                             )
-                        except Exception:
-                            pass
                     await asyncio.sleep(1.5)
                     # Закрываем живые ресурсы ДО жёсткого выхода: иначе
                     # os._exit() минует atexit (voice_router, который возвращает
                     # звуковые маршруты в норму) и поток-диктофон остаётся.
                     import os as _os
 
-                    try:
+                    with contextlib.suppress(Exception):
                         await asyncio.wait_for(self.session.close(), timeout=3.0)
-                    except Exception:
-                        pass
                     self.session = None
                     try:
                         # Останавливаем микрофон/воспроизведение, если хендлы есть.
@@ -2259,10 +2252,8 @@ class JarvisLive:
                         _vr.shutdown()
                     except Exception:
                         pass
-                    try:
+                    with contextlib.suppress(Exception):
                         self.ui.close()
-                    except Exception:
-                        pass
 
                     _os._exit(0)
 
@@ -2415,15 +2406,11 @@ class JarvisLive:
         if q is None:
             return
         if q.full():
-            try:
+            with contextlib.suppress(asyncio.QueueEmpty):
                 q.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-        try:
+        # Defensive against a concurrent producer filling the last slot.
+        with contextlib.suppress(asyncio.QueueFull):
             q.put_nowait(msg)
-        except asyncio.QueueFull:
-            # Defensive against a concurrent producer filling the last slot.
-            pass
 
     async def _listen_audio(self):
         print("[JARVIS] 🎤 Mic started")
@@ -2504,10 +2491,8 @@ class JarvisLive:
                 # Feed the live mic level to the HUD so the waveform reacts to
                 # the user's actual voice while listening. Purely cosmetic — any
                 # failure here must never disturb the mic.
-                try:
+                with contextlib.suppress(Exception):
                     self.ui.set_audio_level(_pcm_level(indata))
-                except Exception:
-                    pass
 
         try:
 
@@ -2553,10 +2538,8 @@ class JarvisLive:
             raise
         finally:
             offline_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await offline_task
-            except asyncio.CancelledError:
-                pass
             self._offline_audio_queue = None
 
     def _queue_offline_frame(self, data: bytes):
@@ -2564,14 +2547,10 @@ class JarvisLive:
         if queue is None:
             return
         if queue.full():
-            try:
+            with contextlib.suppress(asyncio.QueueEmpty):
                 queue.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-        try:
+        with contextlib.suppress(asyncio.QueueFull):
             queue.put_nowait(data)
-        except asyncio.QueueFull:
-            pass
 
     async def _consume_offline_audio(self):
         """Segment mic audio locally and pass recognized text to the normal chat path."""
@@ -3038,10 +3017,8 @@ class JarvisLive:
                     # Optionally mirror JARVIS's own voice onto an Android
                     # device's speaker (owner request via android_speaker).
                     if router.enabled:
-                        try:
+                        with contextlib.suppress(Exception):
                             await asyncio.to_thread(router.write, data)
-                        except Exception:
-                            pass
                     # Device-only mode silences the PC speaker but keeps the
                     # stream fed so playback timing stays in step.
                     if router.enabled and router.only_device:
@@ -3570,10 +3547,8 @@ class JarvisLive:
                     f"{item.get('chat', '')} — {item.get('sender', '')}: {item.get('text', '')}"
                     for item in items
                 )
-                try:
+                with contextlib.suppress(Exception):
                     self.ui.show_content("TELEGRAM — новые сообщения", visible)
-                except Exception:
-                    pass
 
                 prompt = (
                     "[TELEGRAM] New incoming Telegram messages just arrived. "
@@ -3690,8 +3665,7 @@ class JarvisLive:
         if not self.session:
             return
         try:
-            with open(path, "rb") as f:
-                data = f.read()
+            data = await asyncio.to_thread(lambda p=path: open(p, "rb").read())
         except Exception as e:
             print(f"[Dashboard] Photo read failed: {e}")
             return
@@ -3721,6 +3695,36 @@ class JarvisLive:
             turn_complete=True,
         )
         self.ui.write_log("SYS: Фото с телефона отправлено в зрение JARVIS.")
+
+    async def _send_remote_vision(self, data: bytes, mime: str, prompt: str, src_label: str) -> None:
+        """Feed an in-memory image (e.g. a video frame) to JARVIS's vision session.
+
+        Mirrors _send_remote_photo but takes bytes directly so that video frame
+        extraction does not need to round-trip through a temp file on disk.
+        """
+        if not self.session:
+            return
+        if not data:
+            return
+        if len(data) > 6 * 1024 * 1024:
+            self.ui.write_log("SYS: Кадр слишком большой для зрения — пропущен.")
+            return
+        import base64 as _b64
+
+        if self._wake_enabled and not self._awake:
+            self.wake(reason="phone media")
+        b64 = _b64.b64encode(data).decode("ascii")
+        await self.session.send_client_content(
+            turns={
+                "role": "user",
+                "parts": [
+                    {"inline_data": {"mime_type": mime, "data": b64}},
+                    {"text": f"[IMAGE SOURCE: {src_label}]\n\n" + prompt},
+                ],
+            },
+            turn_complete=True,
+        )
+        self.ui.write_log(f"SYS: Кадр ({src_label}) отправлен в зрение JARVIS.")
 
     # ── dashboard command relay ─────────────────────────────────────────────
 
@@ -4093,6 +4097,18 @@ class JarvisLive:
 def main():
     ui = JarvisUI("face.png")
 
+    # ── Ollama: локальный бесплатный бэкап (прогрев + статус при старте) ─────
+    try:
+        from core import gemini as _gemini
+
+        _gemini.warmup_ollama()
+        if _gemini.ollama_available():
+            print(f"[Ollama] подключён: модель={_gemini.ollama_model()}")
+        else:
+            print("[Ollama] недоступен (локальный сервер не отвечает) — используется только Gemini")
+    except Exception as e:
+        print(f"[Ollama] инициализация не удалась: {e}")
+
     # Фоновая проверка обновлений (не блокирует запуск)
     try:
         from jarvis.core.update_integration import UpdateManager
@@ -4116,3 +4132,61 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def _is_tool_failure_result(result) -> bool:
+    if not isinstance(result, str):
+        return False
+    text = result.strip()
+    if not text:
+        return False
+    low = text.lower()
+    markers = ("failed:", "unknown tool:", "is not available.", "mcp call failed:", "mcp tool reported an error:", "plugin failed:")
+    return any(m in low for m in markers)
+
+
+def _lesson_note(tool, item) -> str:
+    mistake = ""
+    fix = ""
+    hits = 0
+    if isinstance(item, dict):
+        mistake = str(item.get("mistake", "") or "")
+        fix = str(item.get("fix", "") or "")
+        hits = int(item.get("hits") or 0)
+    parts = ["INTERNAL LEARNING NOTE: " + str(tool) + " previously failed."]
+    if mistake:
+        parts.append(mistake)
+    if hits >= 2:
+        parts.append("Do not retry this exact call unchanged.")
+    if fix:
+        parts.append(fix)
+    return " ".join(parts)
+
+
+def _tool_learning_note_impl(holder, tool, result, args=None):
+    from memory import lessons
+    r = str(result)
+    unknown = ("unknown tool:" in r.lower()) or ("is not available." in r.lower())
+    request = getattr(holder, "_latest_user_request", "") or getattr(holder, "_last_user_request_text", "") or ""
+    item = lessons.record_tool_failure(tool, r, args=args, request=request, unknown=unknown)
+    if item is None:
+        item = {"mistake": r}
+    return _lesson_note(tool, item)
+
+
+def _observe_user_turn_impl(holder, text):
+    from memory import lessons
+    if not lessons.looks_like_correction(str(text)):
+        return None
+    previous_request = getattr(holder, "_last_user_request_text", "") or ""
+    previous_reply = getattr(holder, "_last_assistant_reply", "") or ""
+    item = lessons.record_user_correction(str(text), previous_request=previous_request, previous_reply=previous_reply)
+    with contextlib.suppress(Exception):
+        holder.ui.write_log("SYS: correction noted: " + str(text))
+    return item
+
+
+JarvisLive._is_tool_failure_result = staticmethod(_is_tool_failure_result)
+JarvisLive._lesson_note = staticmethod(_lesson_note)
+JarvisLive._tool_learning_note = staticmethod(_tool_learning_note_impl)
+JarvisLive._observe_user_turn = staticmethod(_observe_user_turn_impl)

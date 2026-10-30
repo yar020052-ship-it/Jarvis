@@ -24,6 +24,7 @@ config/ui_tasks.json
 ui_old.py
 # ── Personal data the assistant accumulates about you ─────────────────────────
 memory/long_term.json
+memory/lessons.json
 memory/water_state.json
 memory/*.db
 
@@ -61,6 +62,8 @@ desktop.ini
 
 # ── Local backups and caches ────────────────────────────────────────────────────
 .backup/
+# ── Vendored third-party code (inspection only, not part of JARVIS) ─────────────
+vendor_scout/
 runtime/*.json
 .pytest_cache/
 .ruff_cache/
@@ -70,3 +73,4 @@ logs/
 downloads/
 screenshots/
 DIAMOND HILLS/
+.jarvis_background/

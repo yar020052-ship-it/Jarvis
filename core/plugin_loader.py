@@ -347,3 +347,11 @@ def discover_plugins(
     if rejected:
         notify(f"{rejected} plugin(s) could not be loaded — see the console.")
     return registry
+
+
+def reload_plugins(plugins_dir, core_tool_names, logger=print, notify=None):
+    """Hot-reload all plugins from disk without restarting JARVIS."""
+    to_remove = [k for k in list(sys.modules.keys()) if k.startswith("plugins.")]
+    for k in to_remove:
+        del sys.modules[k]
+    return discover_plugins(plugins_dir, core_tool_names, logger, notify)
