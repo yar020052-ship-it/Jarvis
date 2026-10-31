@@ -98,6 +98,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QProgressBar,
@@ -106,8 +107,10 @@ from PyQt6.QtWidgets import (
     QSizeGrip,
     QSizePolicy,
     QSplitter,
+    QAbstractItemView,
     QGraphicsScene,
     QGraphicsView,
+    QListView,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -9530,7 +9533,7 @@ class MainWindow(QMainWindow):
         return w
 
     def _refresh_ai_routes(self) -> None:
-        """Refresh the read-only route cards from the model router itself."""
+        """Refresh the route cards from the model router itself."""
         if not hasattr(self, "_ai_routes_lay"):
             return
         while self._ai_routes_lay.count() > 1:
@@ -9543,21 +9546,44 @@ class MainWindow(QMainWindow):
 
             snapshot = gemini.route_snapshot()
             self._ai_live_model.setText(str(snapshot.get("live_model") or "не выбрана"))
-            tasks = list(snapshot.get("tasks") or [])
+            providers = snapshot.get("providers", {})
+            available = sum(1 for v in providers.values() if v.get("available"))
             self._ai_router_state.setText(
-                f"Автовыбор включён · {len(tasks)} профилей задач · резервные модели подключены"
+                f"Автовыбор включён · {len(snapshot.get('tasks', []))} профилей задач · {available} провайдеров подключено"
             )
-            for route in tasks:
+            for route in snapshot.get("tasks", []):
                 models = list(route.get("models") or [])
+                best_model = route.get("best_model")
+                best_provider = route.get("best_provider")
                 card = QFrame()
                 card.setStyleSheet(_glass_css("AiRouteCard"))
                 cl = QVBoxLayout(card)
                 cl.setContentsMargins(9, 7, 9, 7)
                 cl.setSpacing(3)
+                top_row = QHBoxLayout()
+                top_row.setSpacing(6)
                 title = QLabel(str(route.get("label") or route.get("task") or "Задача"))
                 title.setFont(QFont(_FONT, 8, QFont.Weight.Bold))
                 title.setStyleSheet(f"color: {C.WHITE}; background: transparent;")
-                cl.addWidget(title)
+                top_row.addWidget(title)
+                if best_model:
+                    badge = QLabel(f"→ {best_provider}")
+                    badge.setFont(QFont(_FONT, 7, QFont.Weight.Bold))
+                    badge.setStyleSheet(
+                        f"color: {C.PRI}; background: rgba(255,255,255,10); "
+                        f"border: 1px solid {C.PRI_DIM}; border-radius: 4px; padding: 0 4px;"
+                    )
+                    badge.setToolTip(f"Выбранная: {best_model} ({best_provider})")
+                    top_row.addWidget(badge)
+                top_row.addStretch(1)
+                # Кнопка настройки приоритетов — доступна для любого маршрута
+                # с более чем одной моделью в лестнице.
+                full_ladder = route.get("full_ladder") or []
+                if len(full_ladder) > 1:
+                    cfg_btn = self._flat_btn("⚙", "Настроить приоритеты моделей",
+                                             lambda r=route: self._open_model_priority_dialog(r))
+                    top_row.addWidget(cfg_btn)
+                cl.addLayout(top_row)
                 primary = QLabel(models[0] if models else "маршрут не задан")
                 primary.setWordWrap(True)
                 primary.setFont(QFont(_MONO, 8, QFont.Weight.Bold))
@@ -9583,6 +9609,96 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._ai_live_model.setText("Маршрутизатор недоступен")
             self._ai_router_state.setText(str(exc)[:180])
+
+    def _open_model_priority_dialog(self, route: dict) -> None:
+        """Open a dialog to reorder model priorities for a task type."""
+        from core import gemini
+
+        task = route.get("task", "")
+        best_provider = route.get("best_provider", "")
+        task_label = route.get("label", task)
+        full_ladder = route.get("full_ladder") or []
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Приоритеты моделей — {task_label}")
+        dialog.resize(500, 400)
+        dialog.setModal(True)
+
+        lay = QVBoxLayout(dialog)
+        lay.setSpacing(10)
+        lay.setContentsMargins(14, 14, 14, 14)
+
+        desc = QLabel(
+            f"Перетащите модели чтобы изменить порядок для задачи '{task_label}'. "
+            f"Сильнейшие модели вверху. "
+            f"Текущий провайдер: {best_provider}."
+        )
+        desc.setWordWrap(True)
+        desc.setFont(QFont(_FONT, 8))
+        desc.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        lay.addWidget(desc)
+
+        list_widget = QListWidget()
+        list_widget.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        list_widget.setMovement(QListView.Movement.Free)
+        list_widget.setStyleSheet(f"""
+            QListWidget {{ background: {C.PANEL2}; color: {C.WHITE}; border: 1px solid {C.BORDER_B}; border-radius: 6px; }}
+            QListWidget::item {{ padding: 4px 8px; border-bottom: 1px solid {C.BORDER_A}; }}
+            QListWidget::item:selected {{ background: {C.PRI_GHO}; }}
+        """)
+
+        saved_order = gemini.get_task_model_order(task, provider="all")
+        current_order = saved_order if saved_order else list(full_ladder)
+
+        for model_id in current_order:
+            item = QListWidgetItem(model_id)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+            list_widget.addItem(item)
+
+        lay.addWidget(list_widget, 1)
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        save_btn = QPushButton("Сохранить")
+        save_btn.setFixedHeight(32)
+        save_btn.setFont(QFont(_FONT, 8, QFont.Weight.Bold))
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_btn.setStyleSheet(f"""
+            QPushButton {{ color: {C.WHITE}; background: {C.PRI}; border-radius: 8px; padding: 0 12px; }}
+            QPushButton:hover {{ background: {C.PRI_DIM}; }}
+        """)
+
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.setFixedHeight(32)
+        cancel_btn.setFont(QFont(_FONT, 8))
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{ color: {C.TEXT_MED}; background: rgba(255,255,255,12);
+                border: 1px solid {C.BORDER_B}; border-radius: 8px; padding: 0 12px; }}
+            QPushButton:hover {{ color: {C.WHITE}; border-color: {C.PRI_DIM}; }}
+        """)
+
+        btns.addWidget(cancel_btn)
+        btns.addWidget(save_btn)
+        lay.addLayout(btns)
+
+        def _on_save():
+            new_order = [list_widget.item(i).text() for i in range(list_widget.count())]
+            if new_order:
+                success = gemini.save_task_model_order(task, "all", new_order)
+                if success:
+                    self._refresh_ai_routes()
+                    QMessageBox.information(dialog, "Готово", "Приоритеты моделей сохранены.")
+                    dialog.accept()
+                else:
+                    QMessageBox.warning(dialog, "Ошибка", "Не удалось сохранить приоритеты.")
+
+        def _on_cancel():
+            dialog.reject()
+
+        save_btn.clicked.connect(_on_save)
+        cancel_btn.clicked.connect(_on_cancel)
+        dialog.exec()
 
     def _tick_gauges(self) -> None:
         if (
@@ -11474,7 +11590,19 @@ class MainWindow(QMainWindow):
         """)
         layout.addWidget(github_field)
 
-        status = QLabel("")
+        # Ключ Anthropic (резервный провайдер)
+        layout.addWidget(_lbl2("КЛЮЧ ANTHROPIC API (Claude)"))
+        anthropic_field = QLineEdit()
+        anthropic_field.setEchoMode(QLineEdit.EchoMode.Password)
+        anthropic_field.setPlaceholderText("sk-ant-… (опционально)")
+        anthropic_field.setText(str(cfg.get("anthropic_api_key") or ""))
+        anthropic_field.setClearButtonEnabled(True)
+        anthropic_field.setStyleSheet(f"""
+            QLineEdit {{ background: #000d12; color: {C.TEXT};
+                border: 1px solid {C.BORDER}; border-radius: 7px; padding: 7px; }}
+            QLineEdit:focus {{ border-color: {C.PRI}; }}
+        """)
+        layout.addWidget(anthropic_field)
         status.setWordWrap(True)
         status.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
         layout.addWidget(status)
@@ -11494,6 +11622,7 @@ class MainWindow(QMainWindow):
             k2 = key2_field.text().strip()
             k3 = groq_field.text().strip()
             k4 = github_field.text().strip()
+            k5 = anthropic_field.text().strip()
             if not k1:
                 status.setText("Основной ключ Gemini обязателен.")
                 status.setStyleSheet("color: #ff6b6b; background: transparent;")
@@ -11503,6 +11632,7 @@ class MainWindow(QMainWindow):
                 gemini_api_key_2=k2 if k2 else "",
                 groq_api_key=k3 if k3 else "",
                 github_api_key=k4 if k4 else "",
+                anthropic_api_key=k5 if k5 else "",
             )
             from core import gemini as _gemini
             _gemini.api_key(refresh=True)
@@ -11514,6 +11644,7 @@ class MainWindow(QMainWindow):
             key2_field.clear()
             groq_field.clear()
             github_field.clear()
+            anthropic_field.clear()
             save_keys()
 
         save_btn.clicked.connect(save_keys)
