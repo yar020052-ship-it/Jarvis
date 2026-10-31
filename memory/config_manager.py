@@ -113,7 +113,7 @@ def load_api_keys() -> dict:
                 pass
         except Exception as e:
             print(f"Failed to load api_keys.json: {e}")
-            return {}
+            # Dont return {} -- fall through to legacy fallback below
     # Fallback на legacy-файл в папке приложения (до миграции)
     try:
         _legacy = BASE_DIR / "config" / "api_keys.json"

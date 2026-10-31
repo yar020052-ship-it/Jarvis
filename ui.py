@@ -11605,6 +11605,8 @@ class MainWindow(QMainWindow):
             QLineEdit:focus {{ border-color: {C.PRI}; }}
         """)
         layout.addWidget(anthropic_field)
+
+        status = QLabel("")
         status.setWordWrap(True)
         status.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
         layout.addWidget(status)
