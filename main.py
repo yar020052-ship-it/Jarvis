@@ -1812,6 +1812,13 @@ class JarvisLive:
 
         parts = [time_ctx, identity_ctx]
         parts.append(
+            "[AUTONOMOUS IMPROVEMENT]\n"
+            "You can autonomously improve your own code 24/7 using autonomous_improve. "
+            "It runs background cycles: health check, incident repair, reflection, "
+            "GitHub scouting, and applies improvements via self_rewrite with safety "
+            "guardrails. Start with op=start, stop with op=stop, check with op=status.\n\n"
+        )
+        parts.append(
             "[SELF-REWRITE]\n"
             "You can rewrite your own source code using self_rewrite. Changes are isolated "
             "in a git branch with automatic tests and rollback. Protected files (main.py, "
