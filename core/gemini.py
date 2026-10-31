@@ -620,8 +620,8 @@ def timeout_ms_for(profile: str = "default", fallback_ms: int | None = None) -> 
         "default": DEFAULT_TIMEOUT_MS,
         FAST: DEFAULT_TIMEOUT_MS,
         SMART: 25_000,
-        CODE: 60_000,
-        REPAIR: 60_000,
+        CODE: 30_000,
+        REPAIR: 45_000,
         VISION: 60_000,
         STRATEGY: 120_000,
         SEARCH: 25_000,
@@ -1895,8 +1895,10 @@ def call(
     if config is not None and getattr(config, "tools", None):
         ladder = tuple(model for model in ladder if model != LIVE)
 
-    timeout_profile = tier if tier in _TIMEOUT_PROFILES else "default"
-    timeout_ms = timeout_ms_for(timeout_profile, timeout_ms)
+    # Track overall call start time to prevent unlimited hanging
+    _call_start = time.monotonic()
+    # Maximum total time for the entire call() function (2 minutes)
+    _CALL_MAX_SECONDS = 120.0
 
     # Prefer a local, free model for long-running work such as HOI4 planning
     # when one is available. This keeps the assistant playing without touching
@@ -1958,6 +1960,10 @@ def call(
     current_key = None
     both_keys_drained = False  # если оба ключа упали по квоте на одной модели — fallback для остальных не нужен
     for model, label, k in attempts:
+        # Check overall timeout to prevent unlimited hanging
+        if time.monotonic() - _call_start > _CALL_MAX_SECONDS:
+            logger.warning(f"call() exceeded {_CALL_MAX_SECONDS}s total timeout — aborting")
+            return None
         if both_keys_drained and label == "fallback":
             continue  # второй ключ скорее всего тоже пуст — не тратим время на лишний запрос
         try:
@@ -2055,6 +2061,10 @@ def call(
         for provider in provider_order:
             if provider == "gemini" or provider not in provider_models:
                 continue
+            # Check overall timeout
+            if time.monotonic() - _call_start > _CALL_MAX_SECONDS:
+                logger.warning(f"call() exceeded {_CALL_MAX_SECONDS}s total timeout — aborting")
+                return None
             models = provider_models[provider]
             if depth >= len(models):
                 continue

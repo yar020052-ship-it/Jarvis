@@ -48,7 +48,7 @@ def _get_model(model_name: str = gemini.tier_for_task("coding")):
 
     class _W:
         def generate_content(self, contents):
-            resp = gemini.call(contents, tier=model_name, timeout_ms=60000)
+            resp = gemini.call(contents, tier=model_name, timeout_ms=30000)
             if resp is None:
                 raise RuntimeError("every Gemini model on the ladder failed")
             return resp
