@@ -111,7 +111,7 @@ def _trim_to_limit(memory: dict) -> dict:
     if dropped and _trim_notifier:
         try:
             _trim_notifier(
-                f"SYS: Memory full — forgot {len(dropped)} oldest entries "
+                f"SYS: Память заполнена — забыто {len(dropped)} старых записей "
                 f"({', '.join(dropped[:3])}{'…' if len(dropped) > 3 else ''})"
             )
         except Exception:
@@ -187,11 +187,11 @@ def _pretty(key: str) -> str:
 # Identity is always in the prompt; these categories compete for the remaining
 # budget by recency.
 _CATEGORY_LABELS = {
-    "preferences": "Preferences",
-    "projects": "Active projects / goals",
-    "relationships": "People in their life",
-    "wishes": "Wishes / plans",
-    "notes": "Notes",
+    "preferences": "Предпочтения",
+    "projects": "Активные проекты / цели",
+    "relationships": "Люди в жизни",
+    "wishes": "Желания / планы",
+    "notes": "Заметки",
 }
 
 _IDENTITY_FIELDS = [
@@ -239,11 +239,11 @@ def format_memory_for_prompt(memory: dict | None) -> str:
         val = _entry_value(identity.get(field))
         if not val:
             continue
-        if field == "language":
-            # This profile stores the user's fixed output-language preference.
-            core_lines.append(
-                f"Fixed response language preference: {val}. Always answer in this language."
-            )
+            if field == "language":
+                # This profile stores the user's fixed output-language preference.
+                core_lines.append(
+                    f"Предпочтение языка ответа: {val}. Всегда отвечай на этом языке."
+                )
         else:
             core_lines.append(f"{field.title()}: {val}")
     for key, entry in identity.items():
@@ -322,7 +322,7 @@ def format_memory_for_prompt(memory: dict | None) -> str:
         return ""
 
     out = [
-        "[WHAT YOU KNOW ABOUT THIS PERSON — use naturally, never recite like a list]",
+        "[ЧТО ТЫ ЗНАЕШЬ ОБ ЭТОМ ЧЕЛОВЕКЕ — используй естественно, не читай как список]",
         *core_lines,
     ]
 
@@ -337,8 +337,8 @@ def format_memory_for_prompt(memory: dict | None) -> str:
         if names:
             out.append("")
             out.append(
-                "[ALSO REMEMBERED — values not shown here. Call recall_memory "
-                "with a keyword to read any of these before saying you do not know]"
+                "[ТАКЖЕ ЗАПОМНЕНО — значения не показаны здесь. Вызови recall_memory "
+                "с ключевым словом, чтобы прочитать любое из этих перед тем, как сказать, что не знаешь]"
             )
             out.append(
                 ", ".join(names)
@@ -351,7 +351,7 @@ def format_memory_for_prompt(memory: dict | None) -> str:
 
     if recent_sessions:
         out.append("")
-        out.append("[RECENT SESSION AND PROJECT HISTORY — retain continuity; these are past events]")
+        out.append("[НЕДАВНЯЯ ИСТОРИЯ СЕССИЙ И ПРОЕКТОВ — сохраняй непрерывность; это прошлые события]")
         for item in recent_sessions:
             date = str(item.get("date") or "")
             summary = str(item.get("summary") or "").strip()
@@ -419,9 +419,9 @@ def search_memory(query: str, limit: int = 8) -> str:
 
     if not rows:
         return (
-            f"Nothing stored about '{query}'."
+            f"Ничего не сохранено о '{query}'."
             if query
-            else "I have not stored anything about this person yet."
+            else "Я пока ничего не сохранил об этом человеке."
         )
 
     rows.sort(key=lambda r: (-r[0], r[2]))
@@ -429,10 +429,10 @@ def search_memory(query: str, limit: int = 8) -> str:
         f"{cat}/{_pretty(key)}: {val}" for _s, cat, key, val in rows[: max(1, limit)]
     ]
     head = (
-        f"Stored facts matching '{query}':" if query else "Everything currently stored:"
+        f"Сохранённые факты по запросу '{query}':" if query else "Всё, что сейчас сохранено:"
     )
     more = (
-        f"\n(+{len(rows) - len(lines)} more — search with a narrower keyword)"
+        f"\n(+{len(rows) - len(lines)} ещё — ищи по более узкому ключевому слову)"
         if len(rows) > len(lines)
         else ""
     )
@@ -470,7 +470,7 @@ def remember(key: str, value: str, category: str = "notes") -> str:
     if category not in valid:
         category = "notes"
     update_memory({category: {key: {"value": value}}})
-    return f"Remembered: {category}/{key} = {value}"
+    return f"Запомнил: {category}/{key} = {value}"
 
 
 def forget(key: str, category: str = "notes") -> str:
@@ -480,8 +480,8 @@ def forget(key: str, category: str = "notes") -> str:
         del cat[key]
         memory[category] = cat
         save_memory(memory)
-        return f"Forgotten: {category}/{key}"
-    return f"Not found: {category}/{key}"
+        return f"Забыл: {category}/{key}"
+    return f"Не найдено: {category}/{key}"
 
 
 forget_memory = forget
