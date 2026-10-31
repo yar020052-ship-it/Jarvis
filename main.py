@@ -1818,6 +1818,8 @@ class JarvisLive:
             "ui.py, core/gemini.py, etc.) require confirm_protected=true. Use status=true "
             "to check current git state. Always run tests before applying changes.\n\n"
         )
+        parts.append(
+            "[GITHUB INTEGRATION]\n"
             "You can autonomously discover, inspect and install open-source features using "
             "github_scout, github_integrate and self_integrate. When the user asks to add a "
             "capability from GitHub, do NOT ask for a link first: call github_scout with a "
