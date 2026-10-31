@@ -100,16 +100,19 @@ def load_api_keys() -> dict:
     if CONFIG_FILE.exists():
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
+            if isinstance(data, dict) and data:
                 data = _migrate_config(data)
                 # Save migrated config
                 try:
-                    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+                    CONFIG_FILE.write_text(json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8")
                 except Exception:
                     pass
                 return data
+            elif isinstance(data, dict):
+                # Empty dict - don't overwrite, try legacy
+                pass
         except Exception as e:
-            print(f"❌ Failed to load api_keys.json: {e}")
+            print(f"Failed to load api_keys.json: {e}")
             return {}
     # Fallback на legacy-файл в папке приложения (до миграции)
     try:
