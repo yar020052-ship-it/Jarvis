@@ -1812,7 +1812,12 @@ class JarvisLive:
 
         parts = [time_ctx, identity_ctx]
         parts.append(
-            "[GITHUB INTEGRATION]\n"
+            "[SELF-REWRITE]\n"
+            "You can rewrite your own source code using self_rewrite. Changes are isolated "
+            "in a git branch with automatic tests and rollback. Protected files (main.py, "
+            "ui.py, core/gemini.py, etc.) require confirm_protected=true. Use status=true "
+            "to check current git state. Always run tests before applying changes.\n\n"
+        )
             "You can autonomously discover, inspect and install open-source features using "
             "github_scout, github_integrate and self_integrate. When the user asks to add a "
             "capability from GitHub, do NOT ask for a link first: call github_scout with a "
