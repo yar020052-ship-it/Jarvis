@@ -1900,6 +1900,9 @@ def call(
     # Maximum total time for the entire call() function (2 minutes)
     _CALL_MAX_SECONDS = 120.0
 
+    timeout_profile = tier if tier in _TIMEOUT_PROFILES else "default"
+    timeout_ms = timeout_ms_for(timeout_profile, timeout_ms)
+
     # Prefer a local, free model for long-running work such as HOI4 planning
     # when one is available. This keeps the assistant playing without touching
     # the (quota-limited) Gemini ladder.
