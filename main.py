@@ -37,6 +37,75 @@ for _stream in ("stdout", "stderr"):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+import os as _os2
+
+_LOG_DIR = _os2.path.join(_os2.environ.get("LOCALAPPDATA", _os2.path.expanduser("~")), "JARVIS", "logs")
+_os2.makedirs(_LOG_DIR, exist_ok=True)
+_LOG_FILE = _os2.path.join(_LOG_DIR, "jarvis.log")
+
+try:
+    import logging as _logging
+    _logger = _logging.getLogger()
+    _logger.setLevel(_logging.INFO)
+    _handler = _logging.FileHandler(_LOG_FILE, encoding="utf-8")
+    _handler.setFormatter(_logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    _logger.addHandler(_handler)
+    _logger.info("JARVIS starting up")
+except Exception as _e:
+    import sys as _sys2
+    print(f"[LOG ERROR] {_e}", file=_sys2.stderr, flush=True)
+
+
+class _Tee:
+    def __init__(self, original, log_path):
+        self._orig = original
+        self._log = open(log_path, "a", encoding="utf-8", errors="replace")
+
+    def write(self, data):
+        try:
+            self._orig.write(data)
+        except Exception:
+            pass
+        try:
+            self._log.write(data)
+            self._log.flush()
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self._orig.flush()
+        except Exception:
+            pass
+        try:
+            self._log.flush()
+        except Exception:
+            pass
+
+    def reconfigure(self, **kw):
+        try:
+            self._orig.reconfigure(**kw)
+        except Exception:
+            pass
+
+    def isatty(self):
+        return False
+
+
+try:
+    if _sys.stdout is not None:
+        _sys.stdout = _Tee(_sys.stdout, _LOG_FILE)
+    if _sys.stderr is not None:
+        _sys.stderr = _Tee(_sys.stderr, _LOG_FILE)
+except Exception as _e:
+    # Fallback: just open the log file for appending
+    try:
+        _f = open(_LOG_FILE, "a", encoding="utf-8", errors="replace")
+        _f.write(f"[LOG INIT ERROR] {_e}\n")
+        _f.close()
+    except Exception:
+        pass
+
 import asyncio
 import re
 import threading

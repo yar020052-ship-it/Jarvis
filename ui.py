@@ -7611,7 +7611,9 @@ class MainWindow(QMainWindow):
         prefix = f"Скажи на {name}: "
         if not inp.toPlainText().strip():
             inp.setPlainText(prefix)
-            inp.setCursorPosition(len(prefix))
+            cursor = inp.textCursor()
+            cursor.setPosition(len(prefix))
+            inp.setTextCursor(cursor)
         inp.setFocus()
 
     # focus timer
