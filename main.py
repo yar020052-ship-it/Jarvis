@@ -91,6 +91,12 @@ class _Tee:
     def isatty(self):
         return False
 
+    def fileno(self):
+        try:
+            return self._orig.fileno()
+        except Exception:
+            return -1
+
 
 try:
     if _sys.stdout is not None:
