@@ -1331,12 +1331,181 @@ def reload_model_ladder() -> None:
     ]
 
 
-def _groq_call(contents, config=None, timeout_ms: int | None = None):
-    """Run one generation through the Groq API as a fallback provider.
+def _groq_call(contents, config=None, timeout_ms: int | None = None, model: str | None = None):
+    """Run one generation through the Groq API.
 
-    Iterates through the model ladder (strongest first) until one answers.
+    If model is specified, only try that model. Otherwise try all models in _GROQ_MODELS.
     """
     key = groq_key()
+    if not key:
+        return None
+
+    if config is not None and getattr(config, "tools", None):
+        return None
+
+    # Reuse existing text extraction logic
+    import base64 as _b64
+
+    items = contents if isinstance(contents, (list, tuple)) else [contents]
+    text_parts: list[str] = []
+    images: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            text_parts.append(item)
+            continue
+        blob = getattr(item, "inline_data", None)
+        if blob is not None:
+            data = getattr(blob, "data", None)
+            if isinstance(data, (bytes, bytearray)):
+                images.append(_b64.b64encode(bytes(data)).decode("ascii"))
+            continue
+        txt = getattr(item, "text", None)
+        if txt:
+            text_parts.append(str(txt))
+        elif isinstance(item, dict):
+            if item.get("role") == "user":
+                tp = item.get("parts", {}).get("text", "")
+                if tp:
+                    text_parts.append(str(tp))
+            elif "text" in item:
+                text_parts.append(str(item["text"]))
+    prompt = "\n".join(part for part in text_parts if part.strip())
+    if not prompt.strip() and not images:
+        return None
+
+    system = ""
+    if config is not None:
+        system = (
+            getattr(config, "system_instruction", None)
+            or (config.get("system_instruction") if isinstance(config, dict) else "")
+            or ""
+        )
+
+    messages = []
+    if system.strip():
+        messages.append({"role": "system", "content": system.strip()})
+    if images:
+        content: list = [{"type": "text", "text": prompt}] if prompt.strip() else []
+        for img in images:
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}})
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": prompt})
+
+    timeout = max(10.0, (timeout_ms or 60_000) / 1000.0)
+    models_to_try = [model] if model else _GROQ_MODELS
+    last_error = None
+    for m in models_to_try:
+        if not m:
+            continue
+        try:
+            from groq import Groq
+
+            client = Groq(api_key=key, timeout=timeout)
+            resp = client.chat.completions.create(
+                model=m,
+                messages=messages,
+            )
+            text = str(resp.choices[0].message.content or "").strip()
+            if not text:
+                continue
+            return _Reply(text)
+        except Exception as exc:
+            last_error = exc
+            logger.warning(f"groq/{m}: {type(exc).__name__}: {str(exc)[:140]}")
+            continue
+    if last_error:
+        with _gqt_lock:
+            _gqt_failures += 1
+            if _gqt_failures >= 3:
+                _groq_cooldown_until = time.monotonic() + 300.0
+                _gqt_failures = 0
+    return None
+
+
+def anthropic_key() -> str:
+    """The Anthropic API key from config/env."""
+    try:
+        from memory.config_manager import load_api_keys
+
+        cfg = load_api_keys() or {}
+    except Exception:
+        cfg = {}
+    return str(
+        cfg.get("anthropic_api_key")
+        or __import__("os").environ.get("ANTHROPIC_API_KEY", "")
+        or ""
+    ).strip()
+
+
+def _github_available() -> bool:
+    """True when a GitHub token is configured."""
+    return bool(github_key())
+
+
+_GITHUB_MODELS = _ladder_models_for_provider("github") or [
+    "gpt-4.5-preview",
+    "o3-pro",
+    "o1-pro",
+    "gpt-4.1",
+    "claude-sonnet-4",
+]
+
+
+def _anthropic_call(contents, config=None, timeout_ms: int | None = None, key: str = "", model: str | None = None):
+    key = key or anthropic_key()
+    if not key:
+        return None
+    if config is not None and getattr(config, "tools", None):
+        return None
+    text_parts = []
+    items = contents if isinstance(contents, (list, tuple)) else [contents]
+    for item in items:
+        if isinstance(item, str):
+            text_parts.append(item)
+            continue
+        txt = getattr(item, "text", None)
+        if txt:
+            text_parts.append(str(txt))
+        elif isinstance(item, dict) and "text" in item:
+            text_parts.append(str(item["text"]))
+    prompt = "\n".join(part for part in text_parts if part.strip())
+    if not prompt.strip():
+        return None
+    system = ""
+    if config is not None:
+        system = (
+            getattr(config, "system_instruction", None)
+            or (config.get("system_instruction") if isinstance(config, dict) else "")
+            or ""
+        )
+    timeout = max(10.0, (timeout_ms or 60_000) / 1000.0)
+    model = model or "claude-sonnet-4-20250514"
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=key, timeout=timeout)
+        msg = client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=system.strip() if system.strip() else None,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = str(msg.content[0].text or "").strip() if msg.content else ""
+        if not text:
+            return None
+        return _Reply(text)
+    except Exception as exc:
+        logger.warning("anthropic: %s: %s" % (type(exc).__name__, str(exc)[:140]))
+        return None
+
+
+def _github_call(contents, config=None, timeout_ms: int | None = None, model: str | None = None):
+    """Run one generation through GitHub Models.
+
+    If model is specified, only try that model. Otherwise try all models in _GITHUB_MODELS.
+    """
+    key = github_key()
     if not key:
         return None
 
@@ -1392,115 +1561,34 @@ def _groq_call(contents, config=None, timeout_ms: int | None = None):
         messages.append({"role": "user", "content": prompt})
 
     timeout = max(10.0, (timeout_ms or 60_000) / 1000.0)
+    models_to_try = [model] if model else _GITHUB_MODELS
     last_error = None
-    for model in _GROQ_MODELS:
+    for m in models_to_try:
+        if not m:
+            continue
         try:
-            from groq import Groq
+            from openai import OpenAI
 
-            client = Groq(api_key=key, timeout=timeout)
+            client = OpenAI(
+                api_key=key,
+                base_url="https://models.github.ai",
+            )
             resp = client.chat.completions.create(
-                model=model,
+                model=m,
                 messages=messages,
+                timeout=timeout,
             )
             text = str(resp.choices[0].message.content or "").strip()
             if not text:
                 continue
             return _Reply(text)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             last_error = exc
-            logger.warning(f"groq/{model}: {type(exc).__name__}: {str(exc)[:140]}")
+            logger.warning(f"github/{m}: {type(exc).__name__}: {str(exc)[:140]}")
             continue
     if last_error:
-        with _gqt_lock:
-            _gqt_failures += 1
-            if _gqt_failures >= 3:
-                _groq_cooldown_until = time.monotonic() + 300.0
-                _gqt_failures = 0
+        logger.warning(f"github: все модели недоступны, последняя ошибка: {last_error}")
     return None
-
-
-def anthropic_key() -> str:
-    """The Anthropic API key from config/env."""
-    try:
-        from memory.config_manager import load_api_keys
-
-        cfg = load_api_keys() or {}
-    except Exception:
-        cfg = {}
-    return str(
-        cfg.get("anthropic_api_key")
-        or __import__("os").environ.get("ANTHROPIC_API_KEY", "")
-        or ""
-    ).strip()
-
-
-def _github_available() -> bool:
-    """True when a GitHub token is configured."""
-    return bool(github_key())
-
-
-_GITHUB_MODELS = _ladder_models_for_provider("github") or [
-    "gpt-4.5-preview",
-    "o3-pro",
-    "o1-pro",
-    "gpt-4.1",
-    "claude-sonnet-4",
-]
-
-
-def _anthropic_call(contents, config=None, timeout_ms: int | None = None, key: str = ""):
-    key = key or anthropic_key()
-    if not key:
-        return None
-    if config is not None and getattr(config, "tools", None):
-        return None
-    text_parts = []
-    items = contents if isinstance(contents, (list, tuple)) else [contents]
-    for item in items:
-        if isinstance(item, str):
-            text_parts.append(item)
-            continue
-        txt = getattr(item, "text", None)
-        if txt:
-            text_parts.append(str(txt))
-        elif isinstance(item, dict) and "text" in item:
-            text_parts.append(str(item["text"]))
-    prompt = "\n".join(part for part in text_parts if part.strip())
-    if not prompt.strip():
-        return None
-    system = ""
-    if config is not None:
-        system = (
-            getattr(config, "system_instruction", None)
-            or (config.get("system_instruction") if isinstance(config, dict) else "")
-            or ""
-        )
-    timeout = max(10.0, (timeout_ms or 60_000) / 1000.0)
-    try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=key, timeout=timeout)
-        msg = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4096,
-            system=system.strip() if system.strip() else None,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = str(msg.content[0].text or "").strip() if msg.content else ""
-        if not text:
-            return None
-        return _Reply(text)
-    except Exception as exc:
-        logger.warning("anthropic: %s: %s" % (type(exc).__name__, str(exc)[:140]))
-        return None
-
-
-def _github_call(contents, config=None, timeout_ms: int | None = None):
-    """Run one generation through GitHub Models as a fallback provider.
-
-    Iterates through the model ladder (strongest first) until one answers.
-    Uses the official GitHub Models API endpoint.
-    """
     key = github_key()
     if not key:
         return None
@@ -1937,62 +2025,62 @@ def call(
                 logger.warning(f"{model} [{label}]: {type(e).__name__}: {msg[:140]}")
                 continue
 
-    # Gemini ladder exhausted — try the strongest models from each fallback provider.
-    # The ladder config (model_ladder.json) defines provider_order and model_order
-    # for each task tier, ensuring the most capable models are tried first.
+    # Gemini ladder exhausted — try the strongest models from each provider.
+    # Interleaved: try 1st model from each provider, then 2nd, etc.
+    # This ensures the strongest model from every available provider is tried
+    # before falling back to weaker models.
     tier_upper = tier.upper() if isinstance(tier, str) else str(tier).upper()
     task_cfg = model_ladder().get("task_tiers", {}).get(tier_upper, {})
-    provider_order = task_cfg.get("provider_order", ["groq", "github"])
+    provider_order = task_cfg.get("provider_order", ["groq", "github", "anthropic"])
+    model_order = task_cfg.get("model_order", {})
     status = _provider_status()
 
+    provider_models = {}
     for provider in provider_order:
         if provider == "gemini":
-            continue  # already tried all Gemini models above
+            continue
         if not status.get(provider, {}).get("available"):
             continue
-
-        if provider == "groq" and time.monotonic() >= _groq_cooldown_until:
-            reply = _groq_call(contents, config=config, timeout_ms=timeout_ms)
-            if reply is not None and getattr(reply, "text", None):
-                with _gqt_lock:
-                    _gqt_failures = 0
-                logger.info(f"задача={tier} выбрана модель=groq (лестница: {', '.join(_GROQ_MODELS)})")
-                return reply
-
+        if provider == "groq":
+            order = model_order.get("groq", []) or _GROQ_MODELS
+            provider_models["groq"] = [m for m in order if m]
         elif provider == "github":
-            reply = _github_call(contents, config=config, timeout_ms=timeout_ms)
-            if reply is not None and getattr(reply, "text", None):
-                logger.info(f"задача={tier} выбрана модель=github (лестница: {', '.join(_GITHUB_MODELS)})")
-                return reply
-
+            order = model_order.get("github", []) or _GITHUB_MODELS
+            provider_models["github"] = [m for m in order if m]
         elif provider == "anthropic":
-            # Anthropic fallback (if key configured)
-            ak = None
-            try:
-                from memory.config_manager import load_api_keys
-                cfg = load_api_keys() or {}
-                ak = cfg.get("anthropic_api_key") or __import__("os").environ.get("ANTHROPIC_API_KEY")
-            except Exception:
-                pass
-            if ak:
-                reply = _anthropic_call(contents, config=config, timeout_ms=timeout_ms, key=ak)
+            provider_models["anthropic"] = ["claude-sonnet-4-20250514"]
+
+    max_depth = max((len(v) for v in provider_models.values()), default=0)
+    for depth in range(max_depth):
+        for provider in provider_order:
+            if provider == "gemini" or provider not in provider_models:
+                continue
+            models = provider_models[provider]
+            if depth >= len(models):
+                continue
+            model = models[depth]
+
+            if provider == "groq" and time.monotonic() >= _groq_cooldown_until:
+                reply = _groq_call(contents, config=config, timeout_ms=timeout_ms, model=model)
                 if reply is not None and getattr(reply, "text", None):
-                    logger.info(f"задача={tier} выбрана модель=anthropic")
+                    with _gqt_lock:
+                        _gqt_failures = 0
+                    logger.info(f"задача={tier} выбрана модель=groq/{model}")
                     return reply
 
-    # Also try Anthropic if not in provider_order but key is available
-    if "anthropic" not in provider_order:
-        try:
-            from memory.config_manager import load_api_keys
-            cfg = load_api_keys() or {}
-            ak = cfg.get("anthropic_api_key") or __import__("os").environ.get("ANTHROPIC_API_KEY")
-            if ak:
-                reply = _anthropic_call(contents, config=config, timeout_ms=timeout_ms, key=ak)
+            elif provider == "github":
+                reply = _github_call(contents, config=config, timeout_ms=timeout_ms, model=model)
                 if reply is not None and getattr(reply, "text", None):
-                    logger.info(f"задача={tier} выбрана модель=anthropic")
+                    logger.info(f"задача={tier} выбрана модель=github/{model}")
                     return reply
-        except Exception:
-            pass
+
+            elif provider == "anthropic":
+                ak = anthropic_key()
+                if ak:
+                    reply = _anthropic_call(contents, config=config, timeout_ms=timeout_ms, key=ak, model=model)
+                    if reply is not None and getattr(reply, "text", None):
+                        logger.info(f"задача={tier} выбрана модель=anthropic/{model}")
+                        return reply
 
     return None
 
