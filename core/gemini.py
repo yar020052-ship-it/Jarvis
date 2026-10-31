@@ -2,8 +2,7 @@
 One place where the assistant's one-shot Gemini calls are made.
 
 WHY THIS EXISTS
-    The live conversation runs on the Live API and is not what this file is
-    about. Everything else — reading a screenshot, parsing a flight page,
+    The live conversation runs on the Live API and is not what this file is about. Everything else — reading a screenshot, parsing a flight page,
     turning a request into a shell command, working out which WhatsApp button
     answers a call — was a separate `genai.Client(...)` built at the point of
     use, with the model name written inline. Sixteen files did it, twenty-six
@@ -162,14 +161,224 @@ def models_for_task(task: str) -> tuple[str, ...]:
     return _LADDERS[tier_for_task(task)]
 
 
+def _provider_status() -> dict:
+    """Check which providers have keys configured and are available.
+
+    Returns a dict with availability flags and key fingerprints for each provider.
+    """
+    status = {
+        "gemini": {
+            "available": bool(api_key(key_num=1) or api_key(key_num=2)),
+            "has_primary_key": bool(api_key(key_num=1)),
+            "has_fallback_key": bool(api_key(key_num=2)),
+        },
+        "groq": {
+            "available": _groq_available(),
+        },
+        "github": {
+            "available": _github_available(),
+        },
+        "anthropic": {
+            "available": bool(anthropic_key()),
+        },
+        "ollama": {
+            "available": _ollama_available_cached(),
+        },
+    }
+    return status
+
+
+_ollama_available_cached_val = False
+
+
+def _ollama_available_cached() -> bool:
+    """Cached check of Ollama availability (refreshed each session)."""
+    global _ollama_available_cached_val
+    return _ollama_available_cached_val
+
+
+def refresh_provider_status() -> dict:
+    """Force a refresh of provider availability (e.g., for UI refresh)."""
+    global _ollama_available_cached_val
+    _ollama_available_cached_val = ollama_available()
+    return _provider_status()
+
+
+def task_model_ladder(task: str) -> list[str]:
+    """Return the full ordered model ladder for a task, accounting for available providers.
+
+    Uses the model_ladder.json config to determine provider_order and model_order
+    for the task tier. Only includes models from providers that have keys configured.
+
+    The order is: strongest models first within each provider, providers tried
+    in the configured order (typically Gemini → GitHub → Groq for quality,
+    or Groq → GitHub → Gemini for speed).
+    """
+    tier = tier_for_task(task)
+    # Normalize tier to uppercase to match config keys (FAST, SMART, CODE, etc.)
+    tier_upper = tier.upper()
+    cfg = model_ladder()
+
+    # Get task-specific order from config, or fall back to defaults
+    task_tiers_cfg = cfg.get("task_tiers", {})
+    tier_cfg = task_tiers_cfg.get(tier_upper, {})
+    provider_order = tier_cfg.get("provider_order", [])
+    model_order = tier_cfg.get("model_order", {})
+
+    result = []
+
+    # First: Gemini models (always in the chain based on _LADDERS)
+    gemini_models = []
+    if tier in _LADDERS:
+        for model in _LADDERS[tier]:
+            if model == LIVE:
+                gemini_models.append("Gemini Live")
+            else:
+                gemini_models.append(model)
+
+    # Check for user overrides
+    user_all_order = get_task_model_order(task, "all")
+    user_github_order = get_task_model_order(task, "github")
+    user_groq_order = get_task_model_order(task, "groq")
+
+    # If user saved a global per-task reorder, apply it directly
+    if user_all_order:
+        providers_available = _provider_status()
+        result = [m for m in user_all_order
+                  if m in gemini_models or m in _GITHUB_MODELS or m in _GROQ_MODELS
+                  or m == "ollama (local)"]
+        if result:
+            return result
+
+    # Build the full ladder following provider_order
+    providers_available = _provider_status()
+
+    for provider in provider_order:
+        if provider == "gemini":
+            if providers_available.get("gemini", {}).get("available"):
+                result.extend(gemini_models)
+        elif provider == "github":
+            if providers_available.get("github", {}).get("available"):
+                order = user_github_order or model_order.get("github", [])
+                if order:
+                    result.extend(order)
+                else:
+                    result.extend(_GITHUB_MODELS)
+        elif provider == "groq":
+            if providers_available.get("groq", {}).get("available"):
+                order = user_groq_order or model_order.get("groq", [])
+                if order:
+                    result.extend(order)
+                else:
+                    result.extend(_GROQ_MODELS)
+
+    # Also include Ollama if available (for local inference)
+    if providers_available.get("ollama", {}).get("available"):
+        result.append("ollama (local)")
+
+    return result if result else ["gemini-2.5-flash"]
+
+
+def select_model_for_task(task: str) -> tuple[str | None, str | None]:
+    """Select the best available model for a task, considering quota status.
+
+    Returns (model_name, provider_name) or (None, None) if no model is available.
+
+    The selection algorithm:
+    1. Get the task-specific ladder ordered by provider preference
+    2. For each provider in order, check if a key is available
+    3. For Gemini: walk the model ladder, skipping models on cooldown
+    4. For Groq/GitHub: use the first model in the provider's ladder
+    5. Return the first viable (model, provider) pair
+    """
+    status = _provider_status()
+
+    # Check Gemini first for quality-critical tasks
+    tier = tier_for_task(task)
+    # Normalize tier to uppercase to match config keys (FAST, SMART, CODE, etc.)
+    tier_upper = tier.upper()
+    task_cfg = model_ladder().get("task_tiers", {}).get(tier_upper, {})
+    provider_order = task_cfg.get("provider_order", ["gemini", "github", "groq"])
+
+    model_order = task_cfg.get("model_order", {})
+
+    # Check for user overrides
+    user_github_order = get_task_model_order(task, "github")
+    user_groq_order = get_task_model_order(task, "groq")
+
+    for provider in provider_order:
+        if not status.get(provider, {}).get("available"):
+            continue
+
+        if provider == "gemini":
+            ladder = _LADDERS.get(tier, (_LADDERS[SMART],))
+            for model in ladder:
+                if model == LIVE:
+                    continue
+                if not _cooling(model):
+                    return model, "gemini"
+
+        elif provider == "github":
+            models = user_github_order or model_order.get("github", []) or _GITHUB_MODELS
+            for model in models:
+                return model, "github"
+
+        elif provider == "groq":
+            models = user_groq_order or model_order.get("groq", []) or _GROQ_MODELS
+            for model in models:
+                return model, "groq"
+
+    # Last resort: any Gemini model (even if cooling, try the top one)
+    if status.get("gemini", {}).get("available"):
+        tier = tier_for_task(task)
+        ladder = _LADDERS.get(tier, (_LADDERS[SMART],))
+        for model in ladder:
+            if model != LIVE:
+                return model, "gemini"
+
+    return None, None
+
+
+def get_task_routes_detailed() -> list[dict]:
+    """Return detailed route information for each task type.
+
+    Includes provider availability, model ladder, and cooling status.
+    """
+    tasks = []
+    status = _provider_status()
+    for task, tier in TASK_TIERS.items():
+        chain = _LADDERS[tier]
+        display = ["Gemini Live (резерв)" if model == LIVE else model
+                   for model in chain]
+        cooling_models = [name for model, name in zip(chain, display, strict=False)
+                          if _cooling(model)]
+
+        ladder = task_model_ladder(task)
+        best_model, best_provider = select_model_for_task(task)
+
+        tasks.append({
+            "task": task,
+            "label": _TASK_LABELS[task],
+            "tier": tier,
+            "models": display,
+            "full_ladder": ladder,
+            "cooling": cooling_models,
+            "best_model": best_model,
+            "best_provider": best_provider,
+        })
+    return tasks
+
+
 def describe_routes() -> str:
     """Describe the configured task router in a concise, user-facing form."""
     lines = [f"Диалог и голос: {live_model()}."]
+    providers = _provider_status()
+
     fallbacks = []
-    if _groq_available():
-        fallbacks.append("Groq (резерв)")
-    if _github_available():
-        fallbacks.append("GitHub (резерв)")
+    if providers.get("groq", {}).get("available"):
+        fallbacks.append(f"Groq: {', '.join(_GROQ_MODELS)}")
+    if providers.get("github", {}).get("available"):
+        fallbacks.append(f"GitHub: {', '.join(_GITHUB_MODELS)}")
     for task, tier in TASK_TIERS.items():
         models = ["Gemini Live (резерв)" if model == LIVE else model
                   for model in _LADDERS[tier]]
@@ -180,10 +389,11 @@ def describe_routes() -> str:
 
 def route_snapshot() -> dict:
     """Return the current task routes for the desktop status panel."""
+    providers = _provider_status()
     fallbacks = []
-    if _groq_available():
+    if providers.get("groq", {}).get("available"):
         fallbacks.append("Groq (резерв)")
-    if _github_available():
+    if providers.get("github", {}).get("available"):
         fallbacks.append("GitHub (резерв)")
     tasks = []
     for task, tier in TASK_TIERS.items():
@@ -192,14 +402,140 @@ def route_snapshot() -> dict:
                    for model in chain]
         if fallbacks:
             display = display + fallbacks
+        best_model, best_provider = select_model_for_task(task)
         tasks.append({
             "task": task,
             "label": _TASK_LABELS[task],
+            "tier": tier,
             "models": display,
+            "full_ladder": [m for m in task_model_ladder(task)],
             "cooling": [name for model, name in zip(chain, display, strict=False)
                         if _cooling(model)],
+            "best_model": best_model,
+            "best_provider": best_provider,
         })
-    return {"live_model": live_model(), "tasks": tasks}
+    return {"live_model": live_model(), "tasks": tasks,
+            "groq_ladder": _GROQ_MODELS,
+            "github_ladder": _GITHUB_MODELS,
+            "providers": providers}
+
+
+def save_task_model_order(task: str, provider: str, model_order: list[str]) -> bool:
+    """Save a user-customized model order for a task and provider.
+
+    This lets users reorder which models are tried first within a specific
+    task tier (e.g., prefer Groq for CODE tasks, or GitHub for STRATEGY).
+
+    The order is stored in api_keys.json under 'task_model_order'.
+    """
+    try:
+        from core.paths import get_config_path
+        import json as _json
+
+        path = get_config_path("api_keys.json")
+        data = {}
+        if path.exists():
+            try:
+                data = _json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        if not isinstance(data, dict):
+            data = {}
+
+        current = data.get("task_model_order", {})
+        if not isinstance(current, dict):
+            current = {}
+
+        task_key = str(task).strip().lower()
+        provider_key = str(provider).strip().lower()
+        current.setdefault(task_key, {})
+        current[task_key][provider_key] = list(model_order)
+        data["task_model_order"] = current
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8")
+        reload_model_ladder()
+        return True
+    except Exception as e:
+        logger.warning(f"save_task_model_order: {e}")
+        return False
+
+
+def get_task_model_order(task: str, provider: str) -> list[str] | None:
+    """Get user-customized model order for a task and provider.
+
+    Returns None if no custom order is saved (falls back to config defaults).
+    """
+    try:
+        from core.paths import get_config_path
+        import json as _json
+
+        path = get_config_path("api_keys.json")
+        if not path.exists():
+            return None
+        data = _json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        current = data.get("task_model_order", {})
+        if not isinstance(current, dict):
+            return None
+        task_key = str(task).strip().lower()
+        provider_key = str(provider).strip().lower()
+        order = current.get(task_key, {}).get(provider_key)
+        if isinstance(order, list) and order:
+            return [str(m) for m in order]
+        return None
+    except Exception:
+        return None
+
+
+def get_provider_model_ladder(provider: str) -> list[str]:
+    """Get the model ladder for a provider, respecting user overrides.
+
+    Falls back to the config-based ladder if no user override exists.
+    """
+    # Try to get any user overrides across all tasks for this provider
+    try:
+        from core.paths import get_config_path
+        import json as _json
+
+        path = get_config_path("api_keys.json")
+        if path.exists():
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                overrides = data.get("task_model_order", {})
+                if isinstance(overrides, dict):
+                    for task_key, providers in overrides.items():
+                        if isinstance(providers, dict):
+                            order = providers.get(provider.lower())
+                            if isinstance(order, list) and order:
+                                return [str(m) for m in order]
+    except Exception:
+        pass
+
+    if provider == "groq":
+        return _GROQ_MODELS
+    if provider == "github":
+        return _GITHUB_MODELS
+    return []
+
+
+def get_available_models() -> dict:
+    """Return all available models from config, grouped by provider.
+
+    Used by the UI for rendering model priority editing controls.
+    """
+    cfg = model_ladder()
+    result = {}
+    for provider in cfg.get("providers", []):
+        name = provider.get("name", "")
+        models = provider.get("models", [])
+        result[name] = {
+            "label": provider.get("label", name),
+            "base_url": provider.get("base_url", ""),
+            "models": models if isinstance(models, list) else [],
+        }
+    return result
 
 # The conversation's own model, and ONE careful fallback behind it.
 #
@@ -859,6 +1195,71 @@ def _live_call(contents, config, timeout_ms: int, key: str):
     return _Reply(text) if text else None
 
 
+def _load_model_ladder() -> dict:
+    """Load model ladder configuration from config/model_ladder.json.
+
+    Checks the user's config directory first, then falls back to the
+    application directory's config (for unmigrated installs).
+    Falls back to sensible defaults if the config file is missing or invalid.
+    The config defines a priority ladder of models per API provider, ordered
+    from most capable to least. This ensures the strongest available models
+    are tried first within each provider.
+    """
+    # Try user-config path first, then the app config dir
+    for cfg_path in [
+        get_config_path("model_ladder.json"),
+    ]:
+        try:
+            if cfg_path.exists():
+                data = json.loads(cfg_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and "providers" in data:
+                    return data
+        except Exception:
+            pass
+    # Fallback: check APP_DIR/config/
+    try:
+        from core.paths import APP_DIR
+
+        legacy = APP_DIR / "config" / "model_ladder.json"
+        if legacy.exists():
+            data = json.loads(legacy.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and "providers" in data:
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+_MODEL_LADDER_CACHE: dict | None = None
+
+
+def model_ladder() -> dict:
+    """Return cached model ladder config (reloaded when config changes)."""
+    global _MODEL_LADDER_CACHE
+    if _MODEL_LADDER_CACHE is not None:
+        return _MODEL_LADDER_CACHE
+    _MODEL_LADDER_CACHE = _load_model_ladder()
+    return _MODEL_LADDER_CACHE
+
+
+def _ladder_models_for_provider(provider: str) -> list[str]:
+    """Get the ordered list of model IDs for a given provider from the ladder config.
+
+    Returns models ordered by tier_priority (strongest first).
+    """
+    cfg = model_ladder()
+    providers = cfg.get("providers", [])
+    for p in providers:
+        if p.get("name") == provider:
+            models = p.get("models", [])
+            if isinstance(models, list):
+                sorted_models = sorted(
+                    models, key=lambda m: m.get("tier_priority", 99)
+                )
+                return [m["id"] for m in sorted_models if isinstance(m, dict) and m.get("id")]
+    return []
+
+
 _gqt_lock = threading.Lock()
 _groq_cooldown_until: float = 0.0
 _gqt_failures: int = 0
@@ -899,8 +1300,42 @@ def _groq_available() -> bool:
     return bool(groq_key())
 
 
+# Ordered list of Groq models, strongest first. Falls back to the ladder config
+# or a sensible default if the config is missing.
+_GROQ_MODELS = _ladder_models_for_provider("groq") or [
+    "qwen/qwen3-coder-480b",
+    "deepseek-r1",
+    "llama-3.3-70b",
+    "qwen/qwen-2.5-32b",
+    "mistral/saba-24b",
+]
+
+
+def reload_model_ladder() -> None:
+    """Force reload of the model ladder config (use after config changes)."""
+    global _MODEL_LADDER_CACHE, _GROQ_MODELS, _GITHUB_MODELS
+    _MODEL_LADDER_CACHE = None
+    _GROQ_MODELS = _ladder_models_for_provider("groq") or [
+        "qwen/qwen3-coder-480b",
+        "deepseek-r1",
+        "llama-3.3-70b",
+        "qwen/qwen-2.5-32b",
+        "mistral/saba-24b",
+    ]
+    _GITHUB_MODELS = _ladder_models_for_provider("github") or [
+        "gpt-4.5-preview",
+        "o3-pro",
+        "o1-pro",
+        "gpt-4.1",
+        "claude-sonnet-4",
+    ]
+
+
 def _groq_call(contents, config=None, timeout_ms: int | None = None):
-    """Run one generation through the Groq API as a fallback provider."""
+    """Run one generation through the Groq API as a fallback provider.
+
+    Iterates through the model ladder (strongest first) until one answers.
+    """
     key = groq_key()
     if not key:
         return None
@@ -957,26 +1392,46 @@ def _groq_call(contents, config=None, timeout_ms: int | None = None):
         messages.append({"role": "user", "content": prompt})
 
     timeout = max(10.0, (timeout_ms or 60_000) / 1000.0)
-    try:
-        from groq import Groq
+    last_error = None
+    for model in _GROQ_MODELS:
+        try:
+            from groq import Groq
 
-        client = Groq(api_key=key, timeout=timeout)
-        resp = client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
-            messages=messages,
-        )
-        text = str(resp.choices[0].message.content or "").strip()
-        if not text:
-            return None
-        return _Reply(text)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"groq: {type(exc).__name__}: {str(exc)[:140]}")
+            client = Groq(api_key=key, timeout=timeout)
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+            )
+            text = str(resp.choices[0].message.content or "").strip()
+            if not text:
+                continue
+            return _Reply(text)
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            logger.warning(f"groq/{model}: {type(exc).__name__}: {str(exc)[:140]}")
+            continue
+    if last_error:
         with _gqt_lock:
             _gqt_failures += 1
             if _gqt_failures >= 3:
                 _groq_cooldown_until = time.monotonic() + 300.0
                 _gqt_failures = 0
-        return None
+    return None
+
+
+def anthropic_key() -> str:
+    """The Anthropic API key from config/env."""
+    try:
+        from memory.config_manager import load_api_keys
+
+        cfg = load_api_keys() or {}
+    except Exception:
+        cfg = {}
+    return str(
+        cfg.get("anthropic_api_key")
+        or __import__("os").environ.get("ANTHROPIC_API_KEY", "")
+        or ""
+    ).strip()
 
 
 def _github_available() -> bool:
@@ -984,8 +1439,68 @@ def _github_available() -> bool:
     return bool(github_key())
 
 
+_GITHUB_MODELS = _ladder_models_for_provider("github") or [
+    "gpt-4.5-preview",
+    "o3-pro",
+    "o1-pro",
+    "gpt-4.1",
+    "claude-sonnet-4",
+]
+
+
+def _anthropic_call(contents, config=None, timeout_ms: int | None = None, key: str = ""):
+    key = key or anthropic_key()
+    if not key:
+        return None
+    if config is not None and getattr(config, "tools", None):
+        return None
+    text_parts = []
+    items = contents if isinstance(contents, (list, tuple)) else [contents]
+    for item in items:
+        if isinstance(item, str):
+            text_parts.append(item)
+            continue
+        txt = getattr(item, "text", None)
+        if txt:
+            text_parts.append(str(txt))
+        elif isinstance(item, dict) and "text" in item:
+            text_parts.append(str(item["text"]))
+    prompt = "\n".join(part for part in text_parts if part.strip())
+    if not prompt.strip():
+        return None
+    system = ""
+    if config is not None:
+        system = (
+            getattr(config, "system_instruction", None)
+            or (config.get("system_instruction") if isinstance(config, dict) else "")
+            or ""
+        )
+    timeout = max(10.0, (timeout_ms or 60_000) / 1000.0)
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=key, timeout=timeout)
+        msg = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            system=system.strip() if system.strip() else None,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = str(msg.content[0].text or "").strip() if msg.content else ""
+        if not text:
+            return None
+        return _Reply(text)
+    except Exception as exc:
+        logger.warning("anthropic: %s: %s" % (type(exc).__name__, str(exc)[:140]))
+        return None
+
+
 def _github_call(contents, config=None, timeout_ms: int | None = None):
-    """Run one generation through GitHub Models as a fallback provider."""
+    """Run one generation through GitHub Models as a fallback provider.
+
+    Iterates through the model ladder (strongest first) until one answers.
+    Uses the official GitHub Models API endpoint.
+    """
     key = github_key()
     if not key:
         return None
@@ -1042,27 +1557,44 @@ def _github_call(contents, config=None, timeout_ms: int | None = None):
         messages.append({"role": "user", "content": prompt})
 
     timeout = max(10.0, (timeout_ms or 60_000) / 1000.0)
-    try:
-        from openai import OpenAI
+    last_error = None
+    for model in _GITHUB_MODELS:
+        try:
+            from openai import OpenAI
 
-        client = OpenAI(
-            base_url="https://models.inference.ai.redhat.com",
-        )
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            timeout=timeout,
-        )
-        text = str(resp.choices[0].message.content or "").strip()
-        if not text:
-            return None
-        return _Reply(text)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"github: {type(exc).__name__}: {str(exc)[:140]}")
-        return None
+            client = OpenAI(
+                api_key=key,
+                base_url="https://models.github.ai",
+            )
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                timeout=timeout,
+            )
+            text = str(resp.choices[0].message.content or "").strip()
+            if not text:
+                continue
+            return _Reply(text)
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            logger.warning(f"github/{model}: {type(exc).__name__}: {str(exc)[:140]}")
+            continue
+    if last_error:
+        logger.warning(f"github: все модели недоступны, последняя ошибка: {last_error}")
+    return None
 
 
-def ollama_base_url() -> str:
+def _provider_for_model(model: str) -> str:
+    """Determine which provider a model belongs to."""
+    model_lower = model.lower()
+    if model_lower in ("ollama (local)",) or model_lower.startswith("ollama"):
+        return "ollama"
+    if model in _GROQ_MODELS or model_lower in {m.lower() for m in _GROQ_MODELS}:
+        return "groq"
+    if model in _GITHUB_MODELS or model_lower in {m.lower() for m in _GITHUB_MODELS}:
+        return "github"
+    # Default to gemini for all other models
+    return "gemini"
     """Base URL of a local Ollama/OpenAI-compatible server, if configured."""
     try:
         from memory.config_manager import load_api_keys
@@ -1365,6 +1897,8 @@ def call(
             kwargs = {"model": model, "contents": contents}
             if config is not None:
                 kwargs["config"] = config
+            from google.genai import types as gtypes
+            kwargs["request_options"] = gtypes.HttpOptions(timeout=timeout_ms)
             response = cl.models.generate_content(**kwargs)
             _quota.record(k, True)
             logger.info(f"задача={tier} выбрана модель={model} [{label}]")
@@ -1403,20 +1937,62 @@ def call(
                 logger.warning(f"{model} [{label}]: {type(e).__name__}: {msg[:140]}")
                 continue
 
-    # Gemini ladder exhausted — fall back to alternative providers.
-    if _groq_available() and time.monotonic() >= _groq_cooldown_until:
-        reply = _groq_call(contents, config=config, timeout_ms=timeout_ms)
-        if reply is not None and getattr(reply, "text", None):
-            with _gqt_lock:
-                _gqt_failures = 0
-            logger.info(f"задача={tier} выбрана модель=groq")
-            return reply
+    # Gemini ladder exhausted — try the strongest models from each fallback provider.
+    # The ladder config (model_ladder.json) defines provider_order and model_order
+    # for each task tier, ensuring the most capable models are tried first.
+    tier_upper = tier.upper() if isinstance(tier, str) else str(tier).upper()
+    task_cfg = model_ladder().get("task_tiers", {}).get(tier_upper, {})
+    provider_order = task_cfg.get("provider_order", ["groq", "github"])
+    status = _provider_status()
 
-    if _github_available():
-        reply = _github_call(contents, config=config, timeout_ms=timeout_ms)
-        if reply is not None and getattr(reply, "text", None):
-            logger.info(f"задача={tier} выбрана модель=github")
-            return reply
+    for provider in provider_order:
+        if provider == "gemini":
+            continue  # already tried all Gemini models above
+        if not status.get(provider, {}).get("available"):
+            continue
+
+        if provider == "groq" and time.monotonic() >= _groq_cooldown_until:
+            reply = _groq_call(contents, config=config, timeout_ms=timeout_ms)
+            if reply is not None and getattr(reply, "text", None):
+                with _gqt_lock:
+                    _gqt_failures = 0
+                logger.info(f"задача={tier} выбрана модель=groq (лестница: {', '.join(_GROQ_MODELS)})")
+                return reply
+
+        elif provider == "github":
+            reply = _github_call(contents, config=config, timeout_ms=timeout_ms)
+            if reply is not None and getattr(reply, "text", None):
+                logger.info(f"задача={tier} выбрана модель=github (лестница: {', '.join(_GITHUB_MODELS)})")
+                return reply
+
+        elif provider == "anthropic":
+            # Anthropic fallback (if key configured)
+            ak = None
+            try:
+                from memory.config_manager import load_api_keys
+                cfg = load_api_keys() or {}
+                ak = cfg.get("anthropic_api_key") or __import__("os").environ.get("ANTHROPIC_API_KEY")
+            except Exception:
+                pass
+            if ak:
+                reply = _anthropic_call(contents, config=config, timeout_ms=timeout_ms, key=ak)
+                if reply is not None and getattr(reply, "text", None):
+                    logger.info(f"задача={tier} выбрана модель=anthropic")
+                    return reply
+
+    # Also try Anthropic if not in provider_order but key is available
+    if "anthropic" not in provider_order:
+        try:
+            from memory.config_manager import load_api_keys
+            cfg = load_api_keys() or {}
+            ak = cfg.get("anthropic_api_key") or __import__("os").environ.get("ANTHROPIC_API_KEY")
+            if ak:
+                reply = _anthropic_call(contents, config=config, timeout_ms=timeout_ms, key=ak)
+                if reply is not None and getattr(reply, "text", None):
+                    logger.info(f"задача={tier} выбрана модель=anthropic")
+                    return reply
+        except Exception:
+            pass
 
     return None
 

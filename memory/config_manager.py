@@ -89,6 +89,8 @@ def _migrate_config(data: dict) -> dict:
             data["groq_api_key"] = ""
         if "github_api_key" not in data:
             data["github_api_key"] = ""
+        if "anthropic_api_key" not in data:
+            data["anthropic_api_key"] = ""
         version = 2
     data["_config_version"] = CONFIG_VERSION
     return data
