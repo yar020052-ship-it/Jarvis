@@ -1995,7 +1995,12 @@ def call(
                 continue
             kwargs = {"model": model, "contents": contents}
             if config is not None:
-                kwargs["config"] = config
+                from google.genai import types as gtypes
+                cfg = gtypes.GenerateContentConfig(
+                    system_instruction=getattr(config, "system_instruction", None) or "",
+                    tools=getattr(config, "tools", None),
+                )
+                kwargs["config"] = cfg
             response = cl.models.generate_content(**kwargs)
             _quota.record(k, True)
             logger.info(f"задача={tier} выбрана модель={model} [{label}]")
