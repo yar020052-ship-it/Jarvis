@@ -100,8 +100,8 @@ def test_groq_key_empty_when_not_configured(monkeypatch):
 
 def test_groq_ladder_strongest_first():
     """The strongest Groq models must appear first in the ladder."""
-    assert gemini._GROQ_MODELS[0] == "qwen/qwen3-coder-480b"
-    assert gemini._GROQ_MODELS[1] == "deepseek-r1"
+    assert gemini._GROQ_MODELS[0] == "openai/gpt-oss-120b"
+    assert gemini._GROQ_MODELS[1] == "qwen/qwen3.8-27b"
     assert len(gemini._GROQ_MODELS) >= 3
 
 
@@ -243,7 +243,7 @@ def test_task_model_ladder_respects_provider_availability(monkeypatch):
     # Should contain models from all available providers
     assert len(ladder) > 0
     # Groq strongest model should be in the ladder
-    assert "qwen/qwen3-coder-480b" in ladder
+    assert "openai/gpt-oss-120b" in ladder
     # GitHub strongest model should be in the ladder
     assert "gpt-4.5-preview" in ladder
 
@@ -260,7 +260,7 @@ def test_task_model_ladder_excludes_unavailable_providers(monkeypatch):
 
     ladder = gemini.task_model_ladder("coding")
     # No Groq or Gemini models since they're unavailable
-    assert "qwen/qwen3-coder-480b" not in ladder
+    assert "openai/gpt-oss-120b" not in ladder
     # But GitHub models should still be present
     assert "gpt-4.5-preview" in ladder
 
@@ -293,7 +293,7 @@ def test_select_model_prefers_provider_order(monkeypatch):
     model, provider = gemini.select_model_for_task("coding")
     # CODE tier has groq first in provider_order
     assert provider == "groq"
-    assert model == "qwen/qwen3-coder-480b"
+    assert model == "openai/gpt-oss-120b"
 
 
 def test_get_task_routes_detailed_returns_task_info():
@@ -324,7 +324,7 @@ def test_save_and_get_task_model_order(tmp_path, monkeypatch):
 
     gemini.reload_model_ladder()
 
-    custom_order = ["deepseek-r1", "qwen/qwen3-coder-480b", "llama-3.3-70b"]
+    custom_order = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
     result = gemini.save_task_model_order("coding", "groq", custom_order)
     assert result is True
 

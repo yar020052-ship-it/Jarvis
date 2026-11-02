@@ -1306,11 +1306,9 @@ def _groq_available() -> bool:
 # Ordered list of Groq models, strongest first. Falls back to the ladder config
 # or a sensible default if the config is missing.
 _GROQ_MODELS = _ladder_models_for_provider("groq") or [
-    "qwen/qwen3-coder-480b",
-    "deepseek-r1",
-    "llama-3.3-70b",
-    "qwen/qwen-2.5-32b",
-    "mistral/saba-24b",
+    "openai/gpt-oss-120b",
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-20b",
 ]
 
 
@@ -1998,8 +1996,6 @@ def call(
             kwargs = {"model": model, "contents": contents}
             if config is not None:
                 kwargs["config"] = config
-            from google.genai import types as gtypes
-            kwargs["request_options"] = gtypes.HttpOptions(timeout=timeout_ms)
             response = cl.models.generate_content(**kwargs)
             _quota.record(k, True)
             logger.info(f"задача={tier} выбрана модель={model} [{label}]")
