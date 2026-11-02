@@ -748,7 +748,7 @@ class QuotaTracker:
             return False
         fp = _key_fingerprint(key)
         with self._lock:
-            now = time.monotonic()
+            now = time.time()
             keys_state = self._state.setdefault("keys", {})
             entry = keys_state.get(fp)
             if entry is None:
@@ -777,7 +777,7 @@ class QuotaTracker:
             return
         fp = _key_fingerprint(key)
         with self._lock:
-            now = time.monotonic()
+            now = time.time()
             keys_state = self._state.setdefault("keys", {})
             entry = keys_state.get(fp)
             if entry is None:
