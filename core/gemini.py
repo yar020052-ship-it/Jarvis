@@ -194,6 +194,7 @@ _ollama_available_cached_val = False
 def _ollama_available_cached() -> bool:
     """Cached check of Ollama availability (refreshed each session)."""
     global _ollama_available_cached_val
+    _ollama_available_cached_val = ollama_available()
     return _ollama_available_cached_val
 
 
@@ -1685,6 +1686,7 @@ def _provider_for_model(model: str) -> str:
         return "github"
     # Default to gemini for all other models
     return "gemini"
+def ollama_base_url() -> str:
     """Base URL of a local Ollama/OpenAI-compatible server, if configured."""
     try:
         from memory.config_manager import load_api_keys
