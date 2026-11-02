@@ -1704,7 +1704,7 @@ def ollama_model() -> str:
     except Exception:
         cfg = {}
     model = str(cfg.get("ollama_model") or "").strip()
-    return model or "qwen2.5-coder:14b"
+    return model or "qwen2.5-coder:7b"
 
 
 def ollama_model_for(tier: str = FAST) -> str:
