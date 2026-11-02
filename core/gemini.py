@@ -1290,7 +1290,9 @@ def github_key() -> str:
         cfg = {}
     return str(
         cfg.get("github_api_key")
+        or cfg.get("github_token")
         or os.environ.get("GITHUB_TOKEN", "")
+        or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", "")
         or ""
     ).strip()
 
