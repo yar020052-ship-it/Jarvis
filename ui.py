@@ -11583,7 +11583,7 @@ class MainWindow(QMainWindow):
         github_field = QLineEdit()
         github_field.setEchoMode(QLineEdit.EchoMode.Password)
         github_field.setPlaceholderText("ghp_… (опционально)")
-        github_field.setText(str(cfg.get("github_api_key") or ""))
+        github_field.setText(str(cfg.get("github_api_key") or cfg.get("github_token") or ""))
         github_field.setClearButtonEnabled(True)
         github_field.setStyleSheet(f"""
             QLineEdit {{ background: #000d12; color: {C.TEXT};
@@ -11636,6 +11636,7 @@ class MainWindow(QMainWindow):
                 gemini_api_key_2=k2 if k2 else "",
                 groq_api_key=k3 if k3 else "",
                 github_api_key=k4 if k4 else "",
+                github_token=k4 if k4 else "",
                 anthropic_api_key=k5 if k5 else "",
             )
             from core import gemini as _gemini
